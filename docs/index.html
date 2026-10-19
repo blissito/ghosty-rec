@@ -33,6 +33,7 @@
   .card { background: var(--card); border: 3px solid var(--line); border-radius: 12px; box-shadow: 6px 6px 0 var(--line); padding: 16px; }
   .card h3 { margin: 0 0 6px; font-size: 17px; color: var(--mint); }
   .card p { margin: 0; font-size: 15px; }
+  .v916 { max-width: 360px; margin: 0 auto; aspect-ratio: 9 / 16; }
   footer { margin-top: 56px; color: var(--muted); font-size: 14px; }
   a { color: var(--mint); }
 </style>
@@ -73,6 +74,10 @@ rec render demo.mov --bg sunset --cursor-size 3 --click ring</code></pre>
     <div class="card"><h3>Zoom solo</h3><p>Sin marcas, hace zoom en cada grupo de clics. Con marcas, va a donde el agente dice.</p></div>
     <div class="card"><h3>Sin nube</h3><p>Graba y renderiza en tu Mac. 15 s de video se exportan en unos 4 s.</p></div>
   </div>
+
+  <h2>Con Claude</h2>
+  <p>Instalas el CLI y la skill; Claude graba la ventana, marca cada paso y te entrega el video. Este vertical lo hizo <code>rec</code> con <code>--trim-idle</code>: la compilación de brew dura 26 s y aquí no se ve.</p>
+  <video class="v916" src="claude.mp4" poster="claude.jpg" muted loop playsinline controls preload="metadata"></video>
 
   <h2>Para tu agente</h2>
   <p>La skill le enseña a Claude Code y a otros agentes a grabar, marcar y renderizar:</p>

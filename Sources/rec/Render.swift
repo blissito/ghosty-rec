@@ -370,7 +370,7 @@ func renderCommand(input: String, args: [String]) async {
                 focus = [(rx + rw / 2) / winW, (ry + rh / 2) / winH]
                 rectN = [rx / winW, ry / winH, rw / winW, rh / winH]
                 // Que el recuadro quepa con aire: nunca más que lo pedido, ni menos de 1.25.
-                if num(m["zoom"]) == nil { scale = max(1.25, min(defaultZoom, 0.8 * min(winW / max(rw, 1), winH / max(rh, 1)))) }
+                if num(m["zoom"]) == nil { scale = max(min(1.25, defaultZoom), min(defaultZoom, 0.8 * min(winW / max(rw, 1), winH / max(rh, 1)))) }
             }
             return Zoom(t: t, hold: num(m["hold"]) ?? 2.0, scale: scale,
                         focus: focus.map { min(1, max(0, $0)) }, rect: rectN, label: m["label"] as? String ?? "",
@@ -523,8 +523,9 @@ func renderCommand(input: String, args: [String]) async {
     var prevTip: CGPoint?
     // Etiquetas: una palabra cada 0.32 s desde la marca, visibles hasta que sale su zoom.
     struct Label { let z: Zoom; let words: Int; var cache: [Int: CIImage] = [:] }
-    var labels = zooms.filter { $0.enabled && !($0.say ?? "").isEmpty }.map { Label(z: $0, words: $0.say!.split(separator: " ").count) }
-    let pillFont = (H > W ? 0.034 : 0.036) * min(W, H) * 1.0
+    var labels = zooms.filter { $0.enabled && !($0.say ?? "").isEmpty }.sorted { $0.t < $1.t }.map { Label(z: $0, words: $0.say!.split(separator: " ").count) }
+    // En vertical el subtítulo va grande (~56 px a 1080 de ancho), como en los shorts.
+    let pillFont = (H > W ? 0.052 : 0.036) * min(W, H)
 
     // Quietud: firma barata de cada cuadro; tramos idénticos de más de `trimIdle` s se recortan a ese largo.
     var keep = [Bool]()
@@ -549,8 +550,11 @@ func renderCommand(input: String, args: [String]) async {
             if prev.count == sig.count { for k in 0..<sig.count where abs(Int(sig[k]) - Int(prev[k])) > 10 { changed += 1 } }
             // El cursor se dibuja aparte: si se mueve, tampoco es quietud.
             let n = keep.count
-            let cursorMoved = n > 0 && n < cur.count && hypot(cur[n][0] - cur[n - 1][0], cur[n][1] - cur[n - 1][1]) > 0.0005
-            still = changed * 200 < sig.count && !cursorMoved ? still + 1 : 0
+            let cursorMoved = project.cursor && n > 0 && n < cur.count && hypot(cur[n][0] - cur[n - 1][0], cur[n][1] - cur[n - 1][1]) > 0.0005
+            // Nunca se corta alrededor de una marca: es cuando se lee el subtítulo o se ve el zoom.
+            let t = Double(n) / Double(fps)
+            let protected = zooms.contains { $0.enabled && t >= $0.t - 1.0 && t <= $0.t + $0.hold + 1.0 }
+            still = changed * 200 < sig.count && !cursorMoved && !protected ? still + 1 : 0
             keep.append(still <= limit)
             prev = sig
         }
@@ -658,7 +662,9 @@ func renderCommand(input: String, args: [String]) async {
         let ft = Double(f) / Double(fps)
         for li in labels.indices {
             let z = labels[li].z
-            guard ft >= z.t, ft < z.t + z.hold + 0.6 else { continue }
+            // El último subtítulo (el CTA) se queda hasta el final del video.
+            let isLast = li == labels.count - 1
+            guard ft >= z.t, isLast || ft < z.t + z.hold + 0.6 else { continue }
             let n = min(labels[li].words, 1 + Int((ft - z.t) / 0.32))
             let pill = labels[li].cache[n] ?? pillImage(z.say!, words: n, fontSize: pillFont, maxWidth: W * 0.86)
             labels[li].cache[n] = pill
