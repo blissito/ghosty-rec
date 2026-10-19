@@ -29,7 +29,9 @@ struct Project: Codable {
     var radius: Double
     var shadow: Double
     var cursor: Bool
-    var cursorSize: Double
+    var cursorSize: Double         // múltiplo del cursor de macOS (Screen Studio usa 1.5)
+    var clickEffect: String?       // "ring" o nil
+    var motionBlur: Bool?          // sólo el cursor; apagado por default
     var crop: [Double]?    // región de la ventana en puntos (x,y,w,h) que entra al video
     var fill: Double?      // en vertical: fracción del alto que ocupa la ventana sin zoom
     var zooms: [Zoom]
@@ -151,6 +153,58 @@ func smoothTrack(duration: Double, fps: Int, sample: (Double) -> [Double], k: Do
         out.append(springs.map(\.x))
     }
     return out
+}
+
+// Gradientes propios con nombre (diagonal, como los de Screen Studio).
+let backgroundPresets: [String: [String]] = [
+    "midnight": ["#1B2A4A", "#0E1317"], "ocean": ["#2E8BFF", "#0B1E5B"], "sunset": ["#FF7A59", "#7B2FF7"],
+    "candy": ["#FF5FA2", "#FFC371"], "mint": ["#85DDCB", "#1F6F62"], "forest": ["#8DCF6E", "#1C4D2E"],
+    "grape": ["#7C3AED", "#1E1033"], "paper": ["#F4F1EA", "#D9D3C4"], "ink": ["#2B2F33", "#0B0D0F"],
+]
+
+// Resuelve el fondo: preset, `macos:<nombre>` (wallpaper ya instalado en esta Mac, no se redistribuye),
+// ruta a imagen, o colores hex (uno = liso, dos o más = gradiente diagonal). Imágenes con recorte tipo cover.
+func backgroundImage(_ spec: [String], canvas: CGSize) -> CIImage {
+    let rect = CGRect(origin: .zero, size: canvas)
+    if spec.count == 1 {
+        let v = spec[0]
+        var path: String?
+        if v.hasPrefix("macos:") { path = "/System/Library/Desktop Pictures/\(v.dropFirst(6)).heic" }
+        else if FileManager.default.fileExists(atPath: (v as NSString).expandingTildeInPath) { path = (v as NSString).expandingTildeInPath }
+        if let path, let img = CIImage(contentsOf: URL(fileURLWithPath: path)) {
+            let k = max(canvas.width / img.extent.width, canvas.height / img.extent.height)
+            let scaled = img.transformed(by: CGAffineTransform(scaleX: k, y: k))
+            let dx = (scaled.extent.width - canvas.width) / 2 + scaled.extent.minX
+            let dy = (scaled.extent.height - canvas.height) / 2 + scaled.extent.minY
+            return scaled.transformed(by: CGAffineTransform(translationX: -dx, y: -dy)).cropped(to: rect)
+        }
+        if let colors = backgroundPresets[v] { return backgroundImage(colors, canvas: canvas) }
+    }
+    let colors = spec.map(parseColor)
+    if colors.count >= 2 {
+        let g = CIFilter.linearGradient()
+        g.point0 = CGPoint(x: 0, y: canvas.height)
+        g.point1 = CGPoint(x: canvas.width, y: 0)
+        g.color0 = colors[0]
+        g.color1 = colors[colors.count - 1]
+        return g.outputImage!.cropped(to: rect)
+    }
+    return CIImage(color: colors.first ?? CIColor(red: 0.05, green: 0.07, blue: 0.09)).cropped(to: rect)
+}
+
+// Anillo de clic: un aro blanco con contorno negro, de radio `r`.
+func ringImage(radius r: CGFloat, alpha: CGFloat) -> CIImage {
+    let size = Int(ceil(r * 2 + 12))
+    let ctx = CGContext(data: nil, width: size, height: size, bitsPerComponent: 8, bytesPerRow: 0,
+                        space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+    let box = CGRect(x: 6, y: 6, width: r * 2, height: r * 2)
+    ctx.setStrokeColor(CGColor(gray: 0, alpha: alpha * 0.8))
+    ctx.setLineWidth(6)
+    ctx.strokeEllipse(in: box)
+    ctx.setStrokeColor(CGColor(gray: 1, alpha: alpha))
+    ctx.setLineWidth(3)
+    ctx.strokeEllipse(in: box)
+    return CIImage(cgImage: ctx.makeImage()!)
 }
 
 func parseColor(_ hex: String) -> CIColor {
@@ -320,6 +374,23 @@ func renderCommand(input: String, args: [String]) async {
                         focus: focus.map { min(1, max(0, $0)) }, rect: rectN, label: m["label"] as? String ?? "",
                         say: m["say"] as? String, enabled: true)
         }
+        // Sin marcas: zoom automático por grupos de clics, como «follow-click-groups» de Screen Studio
+        // (clics a menos de 2.5 s se juntan; el zoom dura del primero al último + 1.5 s).
+        if zooms.isEmpty, !args.contains("--no-auto-zoom") {
+            var groups: [[CursorSample]] = []
+            var prevDown = false
+            for c in cursor {
+                if c.down && !prevDown {
+                    if let last = groups.last?.last, c.t - last.t < 2.5 { groups[groups.count - 1].append(c) } else { groups.append([c]) }
+                }
+                prevDown = c.down
+            }
+            zooms = groups.map { g in
+                let fx = g.map(\.x).reduce(0, +) / Double(g.count), fy = g.map(\.y).reduce(0, +) / Double(g.count)
+                return Zoom(t: g.first!.t, hold: g.last!.t - g.first!.t + 1.5, scale: defaultZoom,
+                            focus: [min(1, max(0, fx)), min(1, max(0, fy))], rect: nil, label: "clic", say: nil, enabled: true)
+            }
+        }
         // Ajusta cada recuadro a lo que se ve al final de su zoom (--no-tighten lo deja tal cual).
         if !args.contains("--no-tighten") {
             let probe = AVURLAsset(url: URL(fileURLWithPath: inPath))
@@ -330,14 +401,20 @@ func renderCommand(input: String, args: [String]) async {
                 zooms[i].focus = [tight[0] + tight[2] / 2, tight[1] + tight[3] / 2]
             }
         }
-        project = Project(video: inPath, aspect: "16:9", background: ["#1B2A4A", "#0E1317"], padding: 0.08, radius: 12,
-                          shadow: 0.45, cursor: true, cursorSize: 22, crop: nil, fill: nil, zooms: zooms)
+        let defaultBg = FileManager.default.fileExists(atPath: "/System/Library/Desktop Pictures/Sonoma.heic") ? ["macos:Sonoma"] : ["midnight"]
+        project = Project(video: inPath, aspect: "16:9", background: defaultBg, padding: 0.08, radius: 12,
+                          shadow: 0.75, cursor: true, cursorSize: 1.5, clickEffect: nil, motionBlur: nil,
+                          crop: nil, fill: nil, zooms: zooms)
     }
     if let a = arg("--aspect", args) { project.aspect = a }
     if let b = arg("--bg", args) { project.background = b.split(separator: ",").map(String.init) }
     if let p = arg("--padding", args).flatMap(Double.init) { project.padding = p }
     if let r = arg("--radius", args).flatMap(Double.init) { project.radius = r }
     if args.contains("--no-cursor") { project.cursor = false }
+    if let c = arg("--cursor-size", args).flatMap(Double.init) { project.cursorSize = c }
+    if let c = arg("--click", args) { project.clickEffect = c == "none" ? nil : c }
+    if args.contains("--motion-blur") { project.motionBlur = true }
+    if let sh = arg("--shadow", args).flatMap(Double.init) { project.shadow = sh }
     // La barra de título de macOS mide 28 pt; su título suele traer el proceso («sleep ◂ …»).
     // Un --crop explícito manda; --no-titlebar sólo aplica sin él.
     if let c = arg("--crop", args) {
@@ -376,9 +453,9 @@ func renderCommand(input: String, args: [String]) async {
     }
     // Pistas suavizadas, una entrada por cuadro.
     let keys = cameraKeys(zooms, duration: duration)
-    let cam = smoothTrack(duration: duration, fps: fps, sample: { t in sampleKeys(keys, t) }, k: 320, c: 40, m: 0.92)
+    let cam = smoothTrack(duration: duration, fps: fps, sample: { t in sampleKeys(keys, t) }, k: 200, c: 40, m: 2.25)
     let cur = smoothTrack(duration: duration, fps: fps, sample: { t in let c = cursorAt(t); return [nx(c.x), ny(c.y)] },
-                          k: 340, c: 58, m: 1)
+                          k: 470, c: 70, m: 3)
 
     // Acomodo: la ventana cabe dentro del lienzo con padding, centrada.
     let W = canvas.width, H = canvas.height
@@ -386,7 +463,9 @@ func renderCommand(input: String, args: [String]) async {
     // Tope de nitidez: ni el acomodo ni el zoom estiran los píxeles grabados más de `maxUpscale`.
     let maxUpscale = CGFloat(arg("--max-upscale", args).flatMap(Double.init) ?? 1.5)
     let pxPerPoint = CGFloat(num(meta["scale"]) ?? 1)
-    let fit = min((W - 2 * pad) / crop[2], (H - 2 * pad) / crop[3], maxUpscale * pxPerPoint)
+    // Si hay zooms, se deja margen para que el zoom quepa sin pasar el tope (~1.4× de zoom nítido).
+    let headroom: CGFloat = zooms.contains { $0.enabled && $0.scale > 1.01 } ? 1.4 : 1
+    let fit = min((W - 2 * pad) / crop[2], (H - 2 * pad) / crop[3], maxUpscale * pxPerPoint / headroom)
     let cw = crop[2] * fit, ch = crop[3] * fit
     let content = CGRect(x: (W - cw) / 2, y: (H - ch) / 2, width: cw, height: ch) // coordenadas CI (origen abajo)
     let radius = CGFloat(project.radius) * fit
@@ -404,18 +483,7 @@ func renderCommand(input: String, args: [String]) async {
         }
     }
 
-    let colors = project.background.map(parseColor)
-    let bg: CIImage = {
-        if colors.count >= 2 {
-            let g = CIFilter.linearGradient()
-            g.point0 = CGPoint(x: 0, y: H)
-            g.point1 = CGPoint(x: W, y: 0)
-            g.color0 = colors[0]
-            g.color1 = colors[1]
-            return g.outputImage!.cropped(to: CGRect(origin: .zero, size: canvas))
-        }
-        return CIImage(color: colors.first ?? CIColor(red: 0.05, green: 0.07, blue: 0.09)).cropped(to: CGRect(origin: .zero, size: canvas))
-    }()
+    let bg = backgroundImage(project.background, canvas: canvas)
     let mask: CIImage = {
         let r = CIFilter.roundedRectangleGenerator()
         r.extent = content
@@ -425,13 +493,20 @@ func renderCommand(input: String, args: [String]) async {
     }()
     let shadow: CIImage = {
         let r = CIFilter.roundedRectangleGenerator()
-        r.extent = content.offsetBy(dx: 0, dy: -0.02 * H)
+        // Sombra de Screen Studio: intensidad 0.75, distancia 25 y blur 20 (a 1080 p), hacia abajo.
+        let u = min(W, H) / 1080
+        r.extent = content.offsetBy(dx: 0, dy: -25 * u * 0.5)
         r.radius = Float(radius)
-        r.color = CIColor(red: 0, green: 0, blue: 0, alpha: CGFloat(project.shadow))
-        return r.outputImage!.applyingGaussianBlur(sigma: 0.025 * H).cropped(to: CGRect(origin: .zero, size: canvas))
+        r.color = CIColor(red: 0, green: 0, blue: 0, alpha: 0.7 * CGFloat(project.shadow))
+        return r.outputImage!.applyingGaussianBlur(sigma: 20 * u).cropped(to: CGRect(origin: .zero, size: canvas))
     }()
     let staticBack = shadow.composited(over: bg)
-    let arrow = cursorImage(height: CGFloat(project.cursorSize) * fit)
+    // El cursor de macOS mide ~20 pt; los proyectos viejos guardaban el alto en puntos (> 5).
+    let cursorPts = project.cursorSize > 5 ? project.cursorSize : 20 * project.cursorSize
+    let arrow = cursorImage(height: CGFloat(cursorPts) * fit)
+    var clickSpring = Spring(x: 1, k: 700, c: 30, m: 1)   // resorte de clic de Screen Studio
+    var lastDownT = -10.0, prevDown = false
+    var prevTip: CGPoint?
     // Etiquetas: una palabra cada 0.32 s desde la marca, visibles hasta que sale su zoom.
     struct Label { let z: Zoom; let words: Int; var cache: [Int: CIImage] = [:] }
     var labels = zooms.filter { $0.enabled && !($0.say ?? "").isEmpty }.map { Label(z: $0, words: $0.say!.split(separator: " ").count) }
@@ -496,12 +571,35 @@ func renderCommand(input: String, args: [String]) async {
         var img = win.composited(over: staticBack)
 
         if project.cursor, f < cur.count {
+            let ft = Double(f) / Double(fps)
+            let down = cursorAt(ft).down
+            if down && !prevDown { lastDownT = ft }
+            prevDown = down
+            clickSpring.step(to: down ? 0.8 : 1, dt: 1 / Double(fps))
             let px = Double(cur[f][0]), py = Double(cur[f][1])
             if (-0.02...1.02).contains(px), (-0.02...1.02).contains(py) {
-                let down = cursorAt(Double(f) / Double(fps)).down
-                let a = down ? arrow.transformed(by: CGAffineTransform(scaleX: 0.85, y: 0.85)) : arrow
                 let tip = CGPoint(x: content.minX + CGFloat(px) * cw, y: content.maxY - CGFloat(py) * ch)
-                img = a.transformed(by: CGAffineTransform(translationX: tip.x - 0.08 * a.extent.height * 0.85, y: tip.y - a.extent.maxY + 0.08 * a.extent.height * 0.85))
+                // Anillo de clic: crece y se desvanece en 0.45 s desde la punta.
+                if project.clickEffect == "ring", ft - lastDownT < 0.45 {
+                    let p = CGFloat((ft - lastDownT) / 0.45)
+                    let ring = ringImage(radius: arrow.extent.height * (0.25 + 0.9 * p), alpha: 1 - p)
+                    img = ring.transformed(by: CGAffineTransform(translationX: tip.x - ring.extent.width / 2, y: tip.y - ring.extent.height / 2))
+                        .composited(over: img)
+                }
+                let k = CGFloat(clickSpring.x)
+                var a = arrow.transformed(by: CGAffineTransform(scaleX: k, y: k))
+                if project.motionBlur == true, let prev = prevTip {
+                    let dx = tip.x - prev.x, dy = tip.y - prev.y
+                    let speed = hypot(dx, dy)
+                    if speed > 2 {
+                        a = a.clampedToExtent().applyingFilter("CIMotionBlur", parameters: [
+                            kCIInputRadiusKey: min(14, speed * 0.5), kCIInputAngleKey: atan2(dy, dx),
+                        ]).cropped(to: a.extent.insetBy(dx: -16, dy: -16))
+                    }
+                }
+                prevTip = tip
+                let hot = 0.08 * arrow.extent.height * 0.85 * k
+                img = a.transformed(by: CGAffineTransform(translationX: tip.x - hot, y: tip.y - arrow.extent.height * k + hot))
                     .composited(over: img)
             }
         }
@@ -515,11 +613,9 @@ func renderCommand(input: String, args: [String]) async {
             let n = min(labels[li].words, 1 + Int((ft - z.t) / 0.32))
             let pill = labels[li].cache[n] ?? pillImage(z.say!, words: n, fontSize: pillFont, maxWidth: W * 0.86)
             labels[li].cache[n] = pill
-            let r = z.rect ?? [z.focus[0] - 0.05, z.focus[1] - 0.05, 0.1, 0.1]
-            let anchor = CGPoint(x: content.minX + CGFloat(r[0]) * cw, y: content.maxY - CGFloat(r[1] + r[3]) * ch).applying(camT)
-            var x = min(max(anchor.x, 0.07 * W), W - pill.extent.width - 0.07 * W)
-            var y = anchor.y - pill.extent.height - 0.015 * H
-            if y < 0.08 * H { y = 0.08 * H }
+            // Tercio inferior, centrada, como subtítulo: nunca tapa lo que se está señalando.
+            var x = (W - pill.extent.width) / 2
+            var y = 0.07 * H
             x = x.rounded(); y = y.rounded()
             // Entrada: sube 12 px en los primeros 0.25 s.
             let rise = CGFloat(max(0, 1 - (ft - z.t) / 0.25)) * 12

@@ -59,14 +59,19 @@ rec mark "teclea el comando" --rect 0,40,520,60 --say "Un comando conecta el rep
 rec stop
 
 <span class="c"># 3. video listo: zoom con resorte, cursor suave, fondo y subtítulo</span>
-rec render demo.mov --aspect 9:16 --no-titlebar</code></pre>
+rec render demo.mov --aspect 9:16 --no-titlebar
+
+<span class="c"># fondos: macos:Sonoma, sunset, midnight, ocean, mint, foto.jpg, #hex,#hex</span>
+rec render demo.mov --bg sunset --cursor-size 3 --click ring</code></pre>
 
   <h2>Por qué</h2>
   <div class="grid">
     <div class="card"><h3>Sólo esa ventana</h3><p>ScreenCaptureKit con filtro de ventana: tus chats y avisos nunca salen en el video.</p></div>
     <div class="card"><h3>Zooms con intención</h3><p>Los zooms salen de las marcas del agente, no de adivinar tus clics. Se quitan con <code>"enabled": false</code>.</p></div>
     <div class="card"><h3>Hecho para agentes</h3><p>Todo responde JSON, arranca y para en segundo plano, y avisa si el texto va a salir borroso.</p></div>
-    <div class="card"><h3>Sin nube</h3><p>Graba y renderiza en tu Mac. 12 s de video se exportan en unos 3 s.</p></div>
+    <div class="card"><h3>Look de Screen Studio</h3><p>Wallpapers de tu macOS o gradientes, sombra suave, cursor grande con resorte y anillo en cada clic.</p></div>
+    <div class="card"><h3>Zoom solo</h3><p>Sin marcas, hace zoom en cada grupo de clics. Con marcas, va a donde el agente dice.</p></div>
+    <div class="card"><h3>Sin nube</h3><p>Graba y renderiza en tu Mac. 15 s de video se exportan en unos 4 s.</p></div>
   </div>
 
   <h2>Para tu agente</h2>
