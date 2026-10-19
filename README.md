@@ -17,6 +17,18 @@ rec render demo.mov --aspect 9:16 --no-titlebar       # zoom, cursor, fondo, pas
   ese zoom desaparece al volver a renderizar.
 - Tope de nitidez: no estira lo grabado más de 1.5× (`--max-upscale`). Graba con letra grande o en Retina.
 
-macOS 15+. `swift build -c release`.
+## Instalar
+
+```sh
+brew install blissito/tap/ghosty-rec
+```
+
+- Requiere macOS 15+ y las herramientas de línea de comandos de Xcode (`xcode-select --install`).
+  Brew compila desde el código: no hay binario que Gatekeeper bloquee.
+- El comando es `rec`. Choca con el `rec` de **sox**: no se pueden tener los dos instalados.
+- La primera vez macOS pide el permiso de **Grabación de pantalla** para tu terminal (Ajustes →
+  Privacidad y seguridad). Prende tu terminal y vuelve a abrirla.
+
+Desde el código: `swift build -c release` → `.build/release/rec`.
 
 Las curvas del zoom y del cursor siguen los valores de [OpenScreen](https://github.com/siddharthvaddem/openscreen) (MIT).

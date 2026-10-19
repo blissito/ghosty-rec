@@ -6,6 +6,8 @@ import CoreGraphics
 import Foundation
 import ScreenCaptureKit
 
+let version = "0.5.2"
+
 let stateDir = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".rec")
 let stateFile = stateDir.appendingPathComponent("session.json")
 // t0 = momento del primer cuadro del archivo; lo escribe sólo el grabador, con su pid.
@@ -334,6 +336,10 @@ func run() async {
     var args = Array(CommandLine.arguments.dropFirst())
     guard let cmd = args.first else { fail(usage, code: 2) }
     args.removeFirst()
+    if ["version", "--version", "-v"].contains(cmd) {
+        print("rec \(version)")
+        return
+    }
     if ["help", "--help", "-h"].contains(cmd) || args.contains("--help") || args.contains("-h") {
         print(usage)
         return
