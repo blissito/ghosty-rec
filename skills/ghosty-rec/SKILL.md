@@ -5,7 +5,7 @@ license: MIT
 compatibility: macOS 15+, Homebrew and the Xcode Command Line Tools. The terminal running rec needs the Screen Recording permission.
 metadata:
   author: blissito
-  version: "0.6.5"
+  version: "0.6.6"
 ---
 
 # Record one window with `rec`
@@ -49,11 +49,14 @@ rec stop
 rec render ~/footage/demo.mov --aspect 16:9 --no-titlebar   # or 9:16, 1:1
 ```
 
-- Look: `--bg macos:Sonoma|sunset|midnight|ocean|candy|mint|forest|grape|paper|ink|photo.jpg|#hex,#hex`
+- Look: `--bg ui:quepal` (any of the 382 [uiGradients](https://uigradients.com), MIT), `--bg macos:Sonoma|sunset|midnight|ocean|candy|mint|forest|grape|paper|ink|photo.jpg|#hex,#hex`
   (`macos:<name>` uses a wallpaper already installed on this Mac), `--cursor-size 3` (multiple of the
   macOS cursor), `--click ring`, `--shadow 0.75`, `--motion-blur` (cursor only, off by default).
 - `--trim-idle 1.5` cuts waits (long installs, builds): stretches where neither the window nor the
   cursor changes are shortened to 1.5 s. `--shadow-style hard` gives a flat cartoon shadow.
+- `--captions words.json` (`[{"w","s","e"}]` in final-video seconds, e.g. from a narration transcript)
+  burns one-line karaoke subtitles (72 px, current word highlighted). The JSON output's `marksOut`
+  gives each mark's time in the final video (after `--trim-idle`), to place the voice.
 - Without marks it zooms automatically on each group of clicks (`--no-auto-zoom` turns it off).
 - Writes `demo.16x9.mp4` (1920×1080, 60 fps) and `demo.project.json`. To drop a zoom set its
   `"enabled": false` in the JSON and render again; `--reset` rebuilds it from the marks.

@@ -15,9 +15,10 @@ rec render demo.mov --aspect 9:16 --no-titlebar       # zoom, cursor, fondo, pas
 - Salida en JSON para agentes. Código de salida 3 si falta el permiso de Grabación de pantalla.
 - `render` deja `demo.project.json`. Cada zoom lleva `"enabled"`: si lo pones en `false`,
   ese zoom desaparece al volver a renderizar.
-- Look de Screen Studio: `--bg macos:Sonoma|sunset|midnight|ocean|mint|foto.jpg|#hex,#hex`,
+- Look de Screen Studio: `--bg ui:quepal` (los 382 gradientes de uiGradients), `--bg macos:Sonoma|sunset|midnight|ocean|mint|foto.jpg|#hex,#hex`,
   `--cursor-size 3`, `--click ring`, sombra suave y resortes medidos de sus proyectos. Sin marcas,
   hace zoom solo en cada grupo de clics (`--no-auto-zoom` lo apaga).
+- Subtítulos karaoke: `--captions palabras.json` (`[{w, s, e}]` en segundos del video final).
 - Tope de nitidez: no estira lo grabado más de 1.5× (`--max-upscale`). Graba con letra grande o en Retina.
 
 ## Instalar
@@ -38,3 +39,4 @@ Página: https://blissito.github.io/ghosty-rec/
 Desde el código: `swift build -c release` → `.build/release/rec`.
 
 Las curvas del zoom y del cursor siguen los valores de [OpenScreen](https://github.com/siddharthvaddem/openscreen) (MIT).
+Los gradientes `ui:` son de [uiGradients](https://github.com/Ghosh/uiGradients) (MIT © 2017 Indrashish Ghosh).

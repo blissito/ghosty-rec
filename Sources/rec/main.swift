@@ -6,7 +6,7 @@ import CoreGraphics
 import Foundation
 import ScreenCaptureKit
 
-let version = "0.6.5"
+let version = "0.6.6"
 
 let stateDir = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".rec")
 let stateFile = stateDir.appendingPathComponent("session.json")
@@ -464,7 +464,7 @@ func run() async {
     case "status":
         if let s = readSession(), isAlive(s.pid) {
             emit(["recording": true, "pid": s.pid, "out": s.out, "app": s.app, "title": s.title],
-                 "● grabando \(s.app) «\(s.title)» → \(short(s.out))")
+                 "● grabando «\(s.title)» → \(short(s.out))")
         } else {
             emit(["recording": false], "○ no hay grabación")
         }

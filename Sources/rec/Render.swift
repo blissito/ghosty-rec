@@ -181,6 +181,11 @@ func backgroundImage(_ spec: [String], canvas: CGSize) -> CIImage {
             return scaled.transformed(by: CGAffineTransform(translationX: -dx, y: -dy)).cropped(to: rect)
         }
         if let colors = backgroundPresets[v] { return backgroundImage(colors, canvas: canvas) }
+        if v.hasPrefix("ui:") {
+            let key = v.dropFirst(3).lowercased().replacingOccurrences(of: " ", with: "-")
+            guard let stops = uiGradients[key] else { fail("no existe el gradiente «\(v.dropFirst(3))» de uiGradients (mira uigradients.com)", code: 2) }
+            return gradientImage(stops, canvas: canvas, horizontal: true)
+        }
     }
     let colors = spec.map(parseColor)
     if colors.count >= 2 {
@@ -192,6 +197,66 @@ func backgroundImage(_ spec: [String], canvas: CGSize) -> CIImage {
         return g.outputImage!.cropped(to: rect)
     }
     return CIImage(color: colors.first ?? CIColor(red: 0.05, green: 0.07, blue: 0.09)).cropped(to: rect)
+}
+
+// Gradiente de N paradas con Core Graphics; horizontal (uiGradients) o diagonal (presets propios).
+func gradientImage(_ hex: [String], canvas: CGSize, horizontal: Bool) -> CIImage {
+    let space = CGColorSpace(name: CGColorSpace.sRGB)!
+    let ctx = CGContext(data: nil, width: Int(canvas.width), height: Int(canvas.height), bitsPerComponent: 8, bytesPerRow: 0,
+                        space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+    let colors = hex.map { h -> CGColor in let c = parseColor(h); return CGColor(srgbRed: c.red, green: c.green, blue: c.blue, alpha: 1) }
+    let locs = (0..<colors.count).map { CGFloat($0) / CGFloat(max(1, colors.count - 1)) }
+    let g = CGGradient(colorsSpace: space, colors: colors as CFArray, locations: locs)!
+    let end = horizontal ? CGPoint(x: canvas.width, y: 0) : CGPoint(x: canvas.width, y: 0)
+    let start = horizontal ? CGPoint(x: 0, y: 0) : CGPoint(x: 0, y: canvas.height)
+    ctx.drawLinearGradient(g, start: start, end: end, options: [.drawsBeforeStartLocation, .drawsAfterEndLocation])
+    return CIImage(cgImage: ctx.makeImage()!)
+}
+
+// Subtítulos karaoke: palabras con tiempo en el video final.
+struct CaptionWord: Decodable { let w: String; let s: Double; let e: Double }
+
+// Parte en renglones: en puntuación, en pausas de más de 0.6 s o cuando ya no cabe a lo ancho.
+func captionLines(_ words: [CaptionWord], font: NSFont, maxWidth: CGFloat) -> [[Int]] {
+    var lines: [[Int]] = [], cur: [Int] = []
+    func width(_ idx: [Int]) -> CGFloat {
+        NSAttributedString(string: idx.map { words[$0].w }.joined(separator: " "), attributes: [.font: font]).size().width
+    }
+    for i in words.indices {
+        if let last = cur.last, words[i].s - words[last].e > 0.6 || width(cur + [i]) > maxWidth {
+            lines.append(cur); cur = []
+        }
+        cur.append(i)
+        if let ch = words[i].w.last, ".,?!:;".contains(ch) { lines.append(cur); cur = [] }
+    }
+    if !cur.isEmpty { lines.append(cur) }
+    return lines
+}
+
+// Un renglón: dichas en blanco, la actual en menta, las que faltan en gris; contorno y sombra dura negros.
+func captionImage(_ words: [CaptionWord], line: [Int], current: Int, font: NSFont) -> CIImage {
+    let attr = NSMutableAttributedString()
+    for (k, i) in line.enumerated() {
+        let color: NSColor = i < current ? NSColor(srgbRed: 0.95, green: 0.96, blue: 0.96, alpha: 1)
+            : i == current ? NSColor(srgbRed: 0.52, green: 0.87, blue: 0.80, alpha: 1)
+            : NSColor(srgbRed: 0.6, green: 0.65, blue: 0.66, alpha: 1)
+        attr.append(NSAttributedString(string: (k > 0 ? " " : "") + words[i].w, attributes: [.font: font, .foregroundColor: color,
+                                       .strokeColor: NSColor.black, .strokeWidth: -7]))
+    }
+    let size = attr.size()
+    let off = max(4, font.pointSize * 0.09), pad = font.pointSize * 0.2
+    let w = Int(ceil(size.width + off + 2 * pad)), h = Int(ceil(size.height + off + 2 * pad))
+    let ctx = CGContext(data: nil, width: w * 2, height: h * 2, bitsPerComponent: 8, bytesPerRow: 0,
+                        space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+    ctx.scaleBy(x: 2, y: 2)
+    NSGraphicsContext.saveGraphicsState()
+    NSGraphicsContext.current = NSGraphicsContext(cgContext: ctx, flipped: false)
+    let shadow = NSMutableAttributedString(attributedString: attr)
+    shadow.addAttributes([.foregroundColor: NSColor.black, .strokeColor: NSColor.black], range: NSRange(location: 0, length: shadow.length))
+    shadow.draw(at: CGPoint(x: pad + off, y: pad))
+    attr.draw(at: CGPoint(x: pad, y: pad + off))
+    NSGraphicsContext.restoreGraphicsState()
+    return CIImage(cgImage: ctx.makeImage()!).transformed(by: CGAffineTransform(scaleX: 0.5, y: 0.5))
 }
 
 // Anillo de clic: un aro blanco con contorno negro, de radio `r`.
@@ -526,6 +591,18 @@ func renderCommand(input: String, args: [String]) async {
     struct Label { let z: Zoom; let words: Int; var cache: [Int: CIImage] = [:] }
     var labels = zooms.filter { $0.enabled && !($0.say ?? "").isEmpty }.sorted { $0.t < $1.t }.map { Label(z: $0, words: $0.say!.split(separator: " ").count) }
     // En vertical el subtítulo va grande (~56 px a 1080 de ancho), como en los shorts.
+    var captions: [CaptionWord] = []
+    if let cp = arg("--captions", args) {
+        guard let d = try? Data(contentsOf: URL(fileURLWithPath: cp)), let c = try? JSONDecoder().decode([CaptionWord].self, from: d) else {
+            fail("no pude leer \(cp): espero [{\"w\", \"s\", \"e\"}] en segundos del video final", code: 2)
+        }
+        captions = c
+    }
+    // 72 px a 1080 de ancho, como los karaoke de la casa.
+    let capFont = NSFont.systemFont(ofSize: 72 * min(W, H) / 1080, weight: .heavy)
+    let capLines = captionLines(captions, font: capFont, maxWidth: W * 0.88)
+    var capCache: [String: CIImage] = [:]
+    if !captions.isEmpty { labels = [] }   // los subtítulos sustituyen a las pastillas --say
     let pillFont = (H > W ? 0.052 : 0.036) * min(W, H)
 
     // Quietud: firma barata de cada cuadro; tramos idénticos de más de `trimIdle` s se recortan a ese largo.
@@ -678,6 +755,22 @@ func renderCommand(input: String, args: [String]) async {
             out = pill.transformed(by: CGAffineTransform(translationX: x, y: y - rise)).composited(over: out)
         }
 
+        // Karaoke: el renglón vive desde un poco antes de su primera palabra hasta que empieza el siguiente
+        // (o 0.6 s después de su última). Va arriba de la franja que tapa TikTok (y 1400 de 1920).
+        let tOut = Double(kept) / Double(fps)
+        if let li = capLines.lastIndex(where: { captions[$0.first!].s - 0.15 <= tOut }) {
+            let line = capLines[li]
+            let until = li + 1 < capLines.count ? captions[capLines[li + 1].first!].s - 0.15 : captions[line.last!].e + 0.6
+            if tOut < until {
+                let current = line.first(where: { captions[$0].e > tOut }) ?? (line.last! + 1)
+                let key = "\(li)-\(current)"
+                let img = capCache[key] ?? captionImage(captions, line: line, current: current, font: capFont)
+                capCache[key] = img
+                let centerY = H > W ? H - 1290 * H / 1920 : 0.12 * H
+                out = img.transformed(by: CGAffineTransform(translationX: ((W - img.extent.width) / 2).rounded(),
+                                                            y: (centerY - img.extent.height / 2).rounded())).composited(over: out)
+            }
+        }
         while !winput.isReadyForMoreMediaData { try? await Task.sleep(nanoseconds: 2_000_000) }
         var opb: CVPixelBuffer?
         guard let pool = adaptor.pixelBufferPool, CVPixelBufferPoolCreatePixelBuffer(nil, pool, &opb) == kCVReturnSuccess, let opb else {
@@ -693,6 +786,12 @@ func renderCommand(input: String, args: [String]) async {
     if writer.status != .completed { fail("falló el export: \(writer.error?.localizedDescription ?? "")") }
     var res: [String: Any] = ["out": outPath, "project": projPath, "frames": kept, "trimmedSeconds": Decimal(string: String(format: "%.1f", Double(f - kept) / Double(fps)))!, "zooms": project.zooms.filter(\.enabled).count,
                               "size": [Int(W), Int(H)], "maxUpscale": Decimal(string: String(format: "%.2f", maxMag))!]
+    // Hora de cada marca en el video final (después de --trim-idle), para colocar la voz.
+    res["marksOut"] = project.zooms.sorted { $0.t < $1.t }.map { z -> [String: Any] in
+        let src = Int(z.t * Double(fps))
+        let o = keep.isEmpty ? z.t : Double(keep.prefix(min(src, keep.count)).filter { $0 }.count) / Double(fps)
+        return ["label": z.label, "t": Decimal(string: String(format: "%.3f", o))!]
+    }
     if !notes.isEmpty {
         // Corto para que quepa en una terminal; la explicación va una sola vez.
         res["zoomLimits"] = notes
