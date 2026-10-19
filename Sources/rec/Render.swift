@@ -32,6 +32,8 @@ struct Project: Codable {
     var cursorSize: Double         // múltiplo del cursor de macOS (Screen Studio usa 1.5)
     var clickEffect: String?       // "ring" o nil
     var motionBlur: Bool?          // sólo el cursor; apagado por default
+    var shadowStyle: String?       // "soft" (Screen Studio) o "hard" (caricatura plana: 8 px, sin blur)
+    var trimIdle: Double?          // corta las esperas: quietud de más de N s se reduce a N s
     var crop: [Double]?    // región de la ventana en puntos (x,y,w,h) que entra al video
     var fill: Double?      // en vertical: fracción del alto que ocupa la ventana sin zoom
     var zooms: [Zoom]
@@ -403,7 +405,7 @@ func renderCommand(input: String, args: [String]) async {
         }
         let defaultBg = FileManager.default.fileExists(atPath: "/System/Library/Desktop Pictures/Sonoma.heic") ? ["macos:Sonoma"] : ["midnight"]
         project = Project(video: inPath, aspect: "16:9", background: defaultBg, padding: 0.08, radius: 12,
-                          shadow: 0.75, cursor: true, cursorSize: 1.5, clickEffect: nil, motionBlur: nil,
+                          shadow: 0.75, cursor: true, cursorSize: 1.5, clickEffect: nil, motionBlur: nil, shadowStyle: nil, trimIdle: nil,
                           crop: nil, fill: nil, zooms: zooms)
     }
     if let a = arg("--aspect", args) { project.aspect = a }
@@ -415,6 +417,8 @@ func renderCommand(input: String, args: [String]) async {
     if let c = arg("--click", args) { project.clickEffect = c == "none" ? nil : c }
     if args.contains("--motion-blur") { project.motionBlur = true }
     if let sh = arg("--shadow", args).flatMap(Double.init) { project.shadow = sh }
+    if let st = arg("--shadow-style", args) { project.shadowStyle = st }
+    if let ti = arg("--trim-idle", args).flatMap(Double.init) { project.trimIdle = ti > 0 ? ti : nil }
     // La barra de título de macOS mide 28 pt; su título suele traer el proceso («sleep ◂ …»).
     // Un --crop explícito manda; --no-titlebar sólo aplica sin él.
     if let c = arg("--crop", args) {
@@ -424,7 +428,7 @@ func renderCommand(input: String, args: [String]) async {
     }
     if let f = arg("--fill", args).flatMap(Double.init) { project.fill = f }
     let enc = JSONEncoder()
-    enc.outputFormatting = [.prettyPrinted, .sortedKeys]
+    enc.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
     try? enc.encode(project).write(to: URL(fileURLWithPath: projPath))
 
     let canvas: CGSize = switch project.aspect {
@@ -467,7 +471,10 @@ func renderCommand(input: String, args: [String]) async {
     let headroom: CGFloat = zooms.contains { $0.enabled && $0.scale > 1.01 } ? 1.4 : 1
     let fit = min((W - 2 * pad) / crop[2], (H - 2 * pad) / crop[3], maxUpscale * pxPerPoint / headroom)
     let cw = crop[2] * fit, ch = crop[3] * fit
-    let content = CGRect(x: (W - cw) / 2, y: (H - ch) / 2, width: cw, height: ch) // coordenadas CI (origen abajo)
+    // En vertical la ventana se centra en el 42 % del alto: TikTok tapa y 1400–1920 (de 1920) con su UI,
+    // y el subtítulo vive justo encima de esa franja.
+    let contentY = H > W ? H - 0.42 * H - ch / 2 : (H - ch) / 2
+    let content = CGRect(x: (W - cw) / 2, y: contentY, width: cw, height: ch) // coordenadas CI (origen abajo)
     let radius = CGFloat(project.radius) * fit
     // En vertical una ventana horizontal queda chica: zoom base para que ocupe ~45 % del alto,
     // y la cámara recorre la ventana siguiendo el foco (el recorte 9:16 sale de la misma pista).
@@ -500,7 +507,15 @@ func renderCommand(input: String, args: [String]) async {
         r.color = CIColor(red: 0, green: 0, blue: 0, alpha: 0.7 * CGFloat(project.shadow))
         return r.outputImage!.applyingGaussianBlur(sigma: 20 * u).cropped(to: CGRect(origin: .zero, size: canvas))
     }()
-    let staticBack = shadow.composited(over: bg)
+    let hardShadow: CIImage = {
+        let u = min(W, H) / 1080
+        let r = CIFilter.roundedRectangleGenerator()
+        r.extent = content.offsetBy(dx: 8 * u, dy: -8 * u)
+        r.radius = Float(radius)
+        r.color = CIColor(red: 0, green: 0, blue: 0, alpha: 1)
+        return r.outputImage!.cropped(to: CGRect(origin: .zero, size: canvas))
+    }()
+    let staticBack = (project.shadowStyle == "hard" ? hardShadow : shadow).composited(over: bg)
     // El cursor de macOS mide ~20 pt; los proyectos viejos guardaban el alto en puntos (> 5).
     let cursorPts = project.cursorSize > 5 ? project.cursorSize : 20 * project.cursorSize
     let arrow = cursorImage(height: CGFloat(cursorPts) * fit)
@@ -511,6 +526,37 @@ func renderCommand(input: String, args: [String]) async {
     struct Label { let z: Zoom; let words: Int; var cache: [Int: CIImage] = [:] }
     var labels = zooms.filter { $0.enabled && !($0.say ?? "").isEmpty }.map { Label(z: $0, words: $0.say!.split(separator: " ").count) }
     let pillFont = (H > W ? 0.034 : 0.036) * min(W, H) * 1.0
+
+    // Quietud: firma barata de cada cuadro; tramos idénticos de más de `trimIdle` s se recortan a ese largo.
+    var keep = [Bool]()
+    if let maxIdle = project.trimIdle, let probeReader = try? AVAssetReader(asset: asset) {
+        let po = AVAssetReaderTrackOutput(track: track, outputSettings: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA])
+        probeReader.add(po)
+        probeReader.startReading()
+        var prev: [UInt8] = []
+        var still = 0
+        let limit = Int(maxIdle * Double(fps))
+        while let sb = po.copyNextSampleBuffer() {
+            guard let pb = CMSampleBufferGetImageBuffer(sb) else { continue }
+            CVPixelBufferLockBaseAddress(pb, .readOnly)
+            let w = CVPixelBufferGetWidth(pb), h = CVPixelBufferGetHeight(pb), bpr = CVPixelBufferGetBytesPerRow(pb)
+            let base = CVPixelBufferGetBaseAddress(pb)!.assumingMemoryBound(to: UInt8.self)
+            var sig: [UInt8] = []
+            sig.reserveCapacity(64 * 64)
+            for gy in 0..<64 { for gx in 0..<64 { sig.append(base[(gy * h / 64) * bpr + (gx * w / 64) * 4 + 1]) } }
+            CVPixelBufferUnlockBaseAddress(pb, .readOnly)
+            // h264 no repite bit a bit un cuadro quieto: se tolera ruido chico (< 0.5 % de puntos cambiados).
+            var changed = prev.count == sig.count ? 0 : sig.count
+            if prev.count == sig.count { for k in 0..<sig.count where abs(Int(sig[k]) - Int(prev[k])) > 10 { changed += 1 } }
+            // El cursor se dibuja aparte: si se mueve, tampoco es quietud.
+            let n = keep.count
+            let cursorMoved = n > 0 && n < cur.count && hypot(cur[n][0] - cur[n - 1][0], cur[n][1] - cur[n - 1][1]) > 0.0005
+            still = changed * 200 < sig.count && !cursorMoved ? still + 1 : 0
+            keep.append(still <= limit)
+            prev = sig
+        }
+    }
+    var kept = 0
 
     // Lectura y escritura.
     guard let reader = try? AVAssetReader(asset: asset) else { fail("no pude abrir el lector") }
@@ -537,6 +583,10 @@ func renderCommand(input: String, args: [String]) async {
     var maxMag: CGFloat = 0
     while let sb = rout.copyNextSampleBuffer() {
         guard let pb = CMSampleBufferGetImageBuffer(sb) else { continue }
+        if f < keep.count, !keep[f] {
+            f += 1
+            continue
+        }
         let i = min(f, cam.count - 1)
         var s = CGFloat(cam[i][0]) * baseZoom
         // Foco en coordenadas del lienzo (CI: y hacia arriba).
@@ -615,7 +665,7 @@ func renderCommand(input: String, args: [String]) async {
             labels[li].cache[n] = pill
             // Tercio inferior, centrada, como subtítulo: nunca tapa lo que se está señalando.
             var x = (W - pill.extent.width) / 2
-            var y = 0.07 * H
+            var y = H > W ? 0.29 * H : 0.07 * H
             x = x.rounded(); y = y.rounded()
             // Entrada: sube 12 px en los primeros 0.25 s.
             let rise = CGFloat(max(0, 1 - (ft - z.t) / 0.25)) * 12
@@ -628,14 +678,15 @@ func renderCommand(input: String, args: [String]) async {
             fail("sin buffer de salida")
         }
         ctx.render(out, to: opb, bounds: CGRect(origin: .zero, size: canvas), colorSpace: sRGB)
-        adaptor.append(opb, withPresentationTime: CMTime(value: Int64(f), timescale: CMTimeScale(fps)))
+        adaptor.append(opb, withPresentationTime: CMTime(value: Int64(kept), timescale: CMTimeScale(fps)))
+        kept += 1
         f += 1
     }
     winput.markAsFinished()
     await writer.finishWriting()
     if writer.status != .completed { fail("falló el export: \(writer.error?.localizedDescription ?? "")") }
-    var res: [String: Any] = ["out": outPath, "project": projPath, "frames": f, "zooms": project.zooms.filter(\.enabled).count,
-                              "size": [Int(W), Int(H)], "maxUpscale": Double(String(format: "%.2f", maxMag))!]
+    var res: [String: Any] = ["out": outPath, "project": projPath, "frames": kept, "trimmedSeconds": Decimal(string: String(format: "%.1f", Double(f - kept) / Double(fps)))!, "zooms": project.zooms.filter(\.enabled).count,
+                              "size": [Int(W), Int(H)], "maxUpscale": Decimal(string: String(format: "%.2f", maxMag))!]
     if !notes.isEmpty { res["zoomLimits"] = notes }
     if maxMag > 1.5 {
         res["warning"] = String(format: "el texto se estira %.1f× y saldrá borroso: graba en pantalla Retina, con fuente más grande o ventana más angosta, o usa --crop", maxMag)
