@@ -338,9 +338,13 @@ func renderCommand(input: String, args: [String]) async {
     if let p = arg("--padding", args).flatMap(Double.init) { project.padding = p }
     if let r = arg("--radius", args).flatMap(Double.init) { project.radius = r }
     if args.contains("--no-cursor") { project.cursor = false }
-    if let c = arg("--crop", args) { project.crop = c.split(separator: ",").compactMap { Double($0) } }
     // La barra de título de macOS mide 28 pt; su título suele traer el proceso («sleep ◂ …»).
-    if args.contains("--no-titlebar") { project.crop = [0, 28, winW, winH - 28] }
+    // Un --crop explícito manda; --no-titlebar sólo aplica sin él.
+    if let c = arg("--crop", args) {
+        project.crop = c.split(separator: ",").compactMap { Double($0) }
+    } else if args.contains("--no-titlebar") {
+        project.crop = [0, 28, winW, winH - 28]
+    }
     if let f = arg("--fill", args).flatMap(Double.init) { project.fill = f }
     let enc = JSONEncoder()
     enc.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -386,6 +390,16 @@ func renderCommand(input: String, args: [String]) async {
     // En vertical una ventana horizontal queda chica: zoom base para que ocupe ~45 % del alto,
     // y la cámara recorre la ventana siguiendo el foco (el recorte 9:16 sale de la misma pista).
     let baseZoom = H > W ? max(1, CGFloat(project.fill ?? 0.6) * H / ch) : 1
+    // Avisa de los zooms que no pueden crecer porque su recuadro ya llena el ancho o el alto.
+    var notes: [String] = []
+    for z in zooms where z.enabled {
+        guard let r = z.rect else { continue }
+        let cap = min(0.92 * W / max(1, CGFloat(r[2]) * cw), 0.92 * H / max(1, CGFloat(r[3]) * ch))
+        if CGFloat(z.scale) * baseZoom > cap * 1.05 {
+            notes.append(String(format: "«%@» queda en %.2f× (pediste %.2f×): su contenido llena el ancho; usa fuente más grande o ventana más angosta",
+                                z.label, max(1, cap), z.scale * Double(baseZoom)))
+        }
+    }
 
     let colors = project.background.map(parseColor)
     let bg: CIImage = {
@@ -521,6 +535,7 @@ func renderCommand(input: String, args: [String]) async {
     if writer.status != .completed { fail("falló el export: \(writer.error?.localizedDescription ?? "")") }
     var res: [String: Any] = ["out": outPath, "project": projPath, "frames": f, "zooms": project.zooms.filter(\.enabled).count,
                               "size": [Int(W), Int(H)], "maxUpscale": Double(String(format: "%.2f", maxMag))!]
+    if !notes.isEmpty { res["zoomLimits"] = notes }
     if maxMag > 1.5 {
         res["warning"] = String(format: "el texto se estira %.1f× y saldrá borroso: graba en pantalla Retina, con fuente más grande o ventana más angosta, o usa --crop", maxMag)
     }
