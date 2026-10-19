@@ -3,3 +3,4 @@
 *.mov
 *.mp4
 dist/
+!docs/demo.mp4
