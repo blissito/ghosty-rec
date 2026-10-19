@@ -17,6 +17,7 @@ struct Zoom: Codable {
     var focus: [Double]    // centro normalizado 0–1 de la ventana
     var rect: [Double]?    // recuadro normalizado de la ventana que debe quedar entero a cuadro
     var label: String
+    var say: String?       // frase que se escribe palabra por palabra junto al recuadro
     var enabled: Bool
 }
 
@@ -235,6 +236,44 @@ func tightenRect(_ r: [Double], asset: AVURLAsset, at t: Double) async -> [Doubl
     return [Double(minX) / Double(w), Double(minY) / Double(h), Double(maxX - minX) / Double(w), Double(maxY - minY) / Double(h)]
 }
 
+// Pastilla plana con sombra dura (sin blur): las primeras `words` palabras de `text`.
+// El ancho se fija con la frase completa para que no brinque mientras se escribe.
+func pillImage(_ text: String, words: Int, fontSize: CGFloat, maxWidth: CGFloat) -> CIImage {
+    let all = text.split(separator: " ").map(String.init)
+    let shown = all.prefix(words).joined(separator: " ")
+    let font = NSFont.systemFont(ofSize: fontSize, weight: .bold)
+    let para = NSMutableParagraphStyle()
+    para.lineBreakMode = .byWordWrapping
+    let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor(calibratedRed: 0.06, green: 0.08, blue: 0.09, alpha: 1), .paragraphStyle: para]
+    let padX = fontSize * 0.7, padY = fontSize * 0.45, shadow = max(4, fontSize * 0.22)
+    let full = NSAttributedString(string: text, attributes: attrs)
+    let box = full.boundingRect(with: CGSize(width: maxWidth - 2 * padX, height: 10_000), options: [.usesLineFragmentOrigin])
+    let w = ceil(box.width + 2 * padX), h = ceil(box.height + 2 * padY)
+    let scale: CGFloat = 2
+    let ctx = CGContext(data: nil, width: Int((w + shadow) * scale), height: Int((h + shadow) * scale), bitsPerComponent: 8, bytesPerRow: 0,
+                        space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+    ctx.scaleBy(x: scale, y: scale)
+    let r = min(h / 2, fontSize)
+    ctx.setFillColor(CGColor(gray: 0, alpha: 0.9))
+    ctx.addPath(CGPath(roundedRect: CGRect(x: shadow, y: 0, width: w, height: h), cornerWidth: r, cornerHeight: r, transform: nil))
+    ctx.fillPath()
+    let pill = CGRect(x: 0, y: shadow, width: w, height: h)
+    ctx.setFillColor(CGColor(srgbRed: 0.52, green: 0.87, blue: 0.80, alpha: 1))
+    ctx.addPath(CGPath(roundedRect: pill, cornerWidth: r, cornerHeight: r, transform: nil))
+    ctx.fillPath()
+    ctx.setStrokeColor(CGColor(gray: 0, alpha: 0.9))
+    ctx.setLineWidth(max(2, fontSize * 0.1))
+    ctx.addPath(CGPath(roundedRect: pill.insetBy(dx: 1, dy: 1), cornerWidth: r, cornerHeight: r, transform: nil))
+    ctx.strokePath()
+    let gctx = NSGraphicsContext(cgContext: ctx, flipped: false)
+    NSGraphicsContext.saveGraphicsState()
+    NSGraphicsContext.current = gctx
+    NSAttributedString(string: shown, attributes: attrs)
+        .draw(with: CGRect(x: padX, y: shadow + padY, width: box.width + 1, height: box.height), options: [.usesLineFragmentOrigin])
+    NSGraphicsContext.restoreGraphicsState()
+    return CIImage(cgImage: ctx.makeImage()!).transformed(by: CGAffineTransform(scaleX: 1 / scale, y: 1 / scale))
+}
+
 func renderCommand(input: String, args: [String]) async {
     let inPath = URL(fileURLWithPath: input).standardizedFileURL.path
     let base = (inPath as NSString).deletingPathExtension
@@ -278,7 +317,8 @@ func renderCommand(input: String, args: [String]) async {
                 if num(m["zoom"]) == nil { scale = max(1.25, min(defaultZoom, 0.8 * min(winW / max(rw, 1), winH / max(rh, 1)))) }
             }
             return Zoom(t: t, hold: num(m["hold"]) ?? 2.0, scale: scale,
-                        focus: focus.map { min(1, max(0, $0)) }, rect: rectN, label: m["label"] as? String ?? "", enabled: true)
+                        focus: focus.map { min(1, max(0, $0)) }, rect: rectN, label: m["label"] as? String ?? "",
+                        say: m["say"] as? String, enabled: true)
         }
         // Ajusta cada recuadro a lo que se ve al final de su zoom (--no-tighten lo deja tal cual).
         if !args.contains("--no-tighten") {
@@ -375,6 +415,10 @@ func renderCommand(input: String, args: [String]) async {
     }()
     let staticBack = shadow.composited(over: bg)
     let arrow = cursorImage(height: CGFloat(project.cursorSize) * fit)
+    // Etiquetas: una palabra cada 0.32 s desde la marca, visibles hasta que sale su zoom.
+    struct Label { let z: Zoom; let words: Int; var cache: [Int: CIImage] = [:] }
+    var labels = zooms.filter { $0.enabled && !($0.say ?? "").isEmpty }.map { Label(z: $0, words: $0.say!.split(separator: " ").count) }
+    let pillFont = (H > W ? 0.034 : 0.036) * min(W, H) * 1.0
 
     // Lectura y escritura.
     guard let reader = try? AVAssetReader(asset: asset) else { fail("no pude abrir el lector") }
@@ -442,7 +486,26 @@ func renderCommand(input: String, args: [String]) async {
                     .composited(over: img)
             }
         }
-        let out = img.transformed(by: camT).cropped(to: CGRect(origin: .zero, size: canvas))
+        var out = img.transformed(by: camT).cropped(to: CGRect(origin: .zero, size: canvas))
+
+        // La pastilla va en el espacio de la pantalla (tamaño fijo), anclada bajo el recuadro ya con la cámara.
+        let ft = Double(f) / Double(fps)
+        for li in labels.indices {
+            let z = labels[li].z
+            guard ft >= z.t, ft < z.t + z.hold + 0.6 else { continue }
+            let n = min(labels[li].words, 1 + Int((ft - z.t) / 0.32))
+            let pill = labels[li].cache[n] ?? pillImage(z.say!, words: n, fontSize: pillFont, maxWidth: W * 0.86)
+            labels[li].cache[n] = pill
+            let r = z.rect ?? [z.focus[0] - 0.05, z.focus[1] - 0.05, 0.1, 0.1]
+            let anchor = CGPoint(x: content.minX + CGFloat(r[0]) * cw, y: content.maxY - CGFloat(r[1] + r[3]) * ch).applying(camT)
+            var x = min(max(anchor.x, 0.07 * W), W - pill.extent.width - 0.07 * W)
+            var y = anchor.y - pill.extent.height - 0.015 * H
+            if y < 0.08 * H { y = 0.08 * H }
+            x = x.rounded(); y = y.rounded()
+            // Entrada: sube 12 px en los primeros 0.25 s.
+            let rise = CGFloat(max(0, 1 - (ft - z.t) / 0.25)) * 12
+            out = pill.transformed(by: CGAffineTransform(translationX: x, y: y - rise)).composited(over: out)
+        }
 
         while !winput.isReadyForMoreMediaData { try? await Task.sleep(nanoseconds: 2_000_000) }
         var opb: CVPixelBuffer?
