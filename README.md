@@ -29,6 +29,9 @@ brew install blissito/tap/ghosty-rec
 - La primera vez macOS pide el permiso de **Grabación de pantalla** para tu terminal (Ajustes →
   Privacidad y seguridad). Prende tu terminal y vuelve a abrirla.
 
+Skill para tu agente (Claude Code y otros): `npx skills add blissito/ghosty-rec`.
+Página: https://blissito.github.io/ghosty-rec/
+
 Desde el código: `swift build -c release` → `.build/release/rec`.
 
 Las curvas del zoom y del cursor siguen los valores de [OpenScreen](https://github.com/siddharthvaddem/openscreen) (MIT).

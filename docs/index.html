@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ghosty-rec</title>
+<meta name="description" content="Graba una sola ventana de macOS desde la terminal y la convierte en video con zooms dirigidos por el agente.">
+<meta property="og:title" content="ghosty-rec">
+<meta property="og:description" content="Graba una sola ventana de macOS y la edita con zooms dirigidos por el agente.">
+<meta property="og:image" content="poster.jpg">
+<style>
+  :root {
+    --bg: #0E1317; --ink: #F2F5F4; --muted: #7C8A8E; --mint: #85DDCB; --line: #000;
+    --card: #151C21; --code: #0A0F12;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 17px/1.55 ui-sans-serif, -apple-system, "Helvetica Neue", sans-serif; }
+  main { max-width: 860px; margin: 0 auto; padding: 56px 16px 80px; }
+  h1 { font-size: clamp(40px, 8vw, 64px); line-height: 1; margin: 0 0 12px; letter-spacing: -0.02em; }
+  h1 span { color: var(--mint); }
+  .lead { font-size: 20px; color: var(--ink); max-width: 620px; margin: 0 0 28px; }
+  h2 { font-size: 22px; margin: 48px 0 12px; }
+  p, li { color: #C9D2D0; }
+  video { width: 100%; display: block; border: 3px solid var(--line); border-radius: 14px; box-shadow: 8px 8px 0 var(--line); background: var(--card); }
+  pre { background: var(--code); border: 3px solid var(--line); border-radius: 12px; box-shadow: 6px 6px 0 var(--line); padding: 16px; overflow-x: auto; font: 14px/1.6 ui-monospace, "SF Mono", Menlo, monospace; color: var(--ink); }
+  code { font-family: ui-monospace, "SF Mono", Menlo, monospace; color: var(--mint); }
+  pre code { color: inherit; }
+  .c { color: var(--muted); }
+  .install { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin: 0 0 32px; }
+  .pill { display: inline-block; background: var(--mint); color: var(--bg); font-weight: 800; padding: 10px 18px; border: 3px solid var(--line); border-radius: 999px; box-shadow: 5px 5px 0 var(--line); text-decoration: none; }
+  .install pre { margin: 0; flex: 1 1 320px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; }
+  .card { background: var(--card); border: 3px solid var(--line); border-radius: 12px; box-shadow: 6px 6px 0 var(--line); padding: 16px; }
+  .card h3 { margin: 0 0 6px; font-size: 17px; color: var(--mint); }
+  .card p { margin: 0; font-size: 15px; }
+  footer { margin-top: 56px; color: var(--muted); font-size: 14px; }
+  a { color: var(--mint); }
+</style>
+</head>
+<body>
+<main>
+  <h1>ghosty<span>-rec</span></h1>
+  <p class="lead">Graba <strong>una sola ventana</strong> de macOS desde la terminal, aunque otra la tape, y la convierte en video con zooms que dirige el agente: él marca qué está haciendo y el render hace el resto.</p>
+
+  <div class="install">
+    <pre><code>brew install blissito/tap/ghosty-rec</code></pre>
+    <a class="pill" href="https://github.com/blissito/ghosty-rec">GitHub</a>
+  </div>
+
+  <video src="demo.mp4" poster="poster.jpg" autoplay muted loop playsinline controls></video>
+
+  <h2>Cómo se usa</h2>
+<pre><code><span class="c"># 1. elige la ventana (por id, nunca la pantalla completa)</span>
+rec windows --json
+rec start --id 651 --out demo.mov
+
+<span class="c"># 2. el agente marca lo que hace mientras graba</span>
+rec mark "teclea el comando" --rect 0,40,520,60 --say "Un comando conecta el repo"
+rec stop
+
+<span class="c"># 3. video listo: zoom con resorte, cursor suave, fondo y subtítulo</span>
+rec render demo.mov --aspect 9:16 --no-titlebar</code></pre>
+
+  <h2>Por qué</h2>
+  <div class="grid">
+    <div class="card"><h3>Sólo esa ventana</h3><p>ScreenCaptureKit con filtro de ventana: tus chats y avisos nunca salen en el video.</p></div>
+    <div class="card"><h3>Zooms con intención</h3><p>Los zooms salen de las marcas del agente, no de adivinar tus clics. Se quitan con <code>"enabled": false</code>.</p></div>
+    <div class="card"><h3>Hecho para agentes</h3><p>Todo responde JSON, arranca y para en segundo plano, y avisa si el texto va a salir borroso.</p></div>
+    <div class="card"><h3>Sin nube</h3><p>Graba y renderiza en tu Mac. 12 s de video se exportan en unos 3 s.</p></div>
+  </div>
+
+  <h2>Para tu agente</h2>
+  <p>La skill le enseña a Claude Code y a otros agentes a grabar, marcar y renderizar:</p>
+  <pre><code>npx skills add blissito/ghosty-rec</code></pre>
+
+  <h2>Requisitos</h2>
+  <ul>
+    <li>macOS 15+ y las Command Line Tools (<code>xcode-select --install</code>); brew compila desde el código.</li>
+    <li>Permiso de <strong>Grabación de pantalla</strong> para tu terminal.</li>
+    <li>El comando es <code>rec</code> y choca con el de <code>sox</code>: no pueden convivir.</li>
+  </ul>
+
+  <footer>MIT · Las curvas del zoom siguen los valores de <a href="https://github.com/siddharthvaddem/openscreen">OpenScreen</a> · Hecho por <a href="https://www.ghosty.studio">Ghosty</a></footer>
+</main>
+</body>
+</html>
