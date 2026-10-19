@@ -5,13 +5,14 @@ license: MIT
 compatibility: macOS 15+, Homebrew and the Xcode Command Line Tools. The terminal running rec needs the Screen Recording permission.
 metadata:
   author: blissito
-  version: "0.6.2"
+  version: "0.6.3"
 ---
 
 # Record one window with `rec`
 
 `rec` records ONE window even if another window covers it, so nothing else on the screen leaks
-into the video (chats, notifications, other apps). Everything prints JSON.
+into the video (chats, notifications, other apps). Piped or with `--json` it prints JSON; in a
+terminal it prints one readable line.
 
 ## Install
 

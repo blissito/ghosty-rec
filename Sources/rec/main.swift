@@ -6,7 +6,7 @@ import CoreGraphics
 import Foundation
 import ScreenCaptureKit
 
-let version = "0.6.2"
+let version = "0.6.3"
 
 let stateDir = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".rec")
 let stateFile = stateDir.appendingPathComponent("session.json")
@@ -67,6 +67,13 @@ func printJSON(_ obj: Any) {
     let data = try! JSONSerialization.data(withJSONObject: obj, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
     print(String(data: data, encoding: .utf8)!)
 }
+
+// En una terminal se imprime una línea legible; por pipe (o con --json) va JSON para agentes, como gh.
+let wantsJSON = CommandLine.arguments.contains("--json") || isatty(STDOUT_FILENO) == 0
+func emit(_ obj: [String: Any], _ human: @autoclosure () -> String) {
+    if wantsJSON { printJSON(obj) } else { print(human()) }
+}
+func short(_ path: String) -> String { (path as NSString).lastPathComponent }
 
 func readSession() -> Session? {
     guard let data = try? Data(contentsOf: stateFile) else { return nil }
@@ -412,7 +419,7 @@ func run() async {
                                   "window": ["id": win.id, "title": win.title, "rect": [f.origin.x, f.origin.y, f.width, f.height]]]
         if !win.onScreen { res["warning"] = "la ventana está minimizada o en otro escritorio: no habrá cuadros hasta que se vea" }
         if t0 == nil { res["warning"] = "no llegó el primer cuadro en 5 s; ¿la ventana está quieta o minimizada?" }
-        printJSON(res)
+        emit(res, "● grabando «\(win.title)» → \(short(outPath))" + ((res["warning"] as? String).map { "\n  ⚠ \($0)" } ?? ""))
 
     case "_record":
         guard args.count >= 4, let id = UInt32(args[0]) else { fail("uso interno") }
@@ -451,13 +458,15 @@ func run() async {
         if isAlive(s.pid) { fail("el grabador no cerró en 10 s (pid \(s.pid))") }
         try? FileManager.default.removeItem(at: stateFile)
         let dur = readClock(pid: s.pid).map { Date().timeIntervalSince1970 - $0 } ?? 0
-        printJSON(["out": s.out, "marks": s.marks, "cursor": (s.out as NSString).deletingPathExtension + ".cursor.jsonl", "seconds": Decimal(string: String(format: "%.2f", dur))!])
+        emit(["out": s.out, "marks": s.marks, "cursor": (s.out as NSString).deletingPathExtension + ".cursor.jsonl", "seconds": Decimal(string: String(format: "%.2f", dur))!],
+             String(format: "■ %@ · %.1f s", short(s.out), dur))
 
     case "status":
         if let s = readSession(), isAlive(s.pid) {
-            printJSON(["recording": true, "pid": s.pid, "out": s.out, "app": s.app, "title": s.title])
+            emit(["recording": true, "pid": s.pid, "out": s.out, "app": s.app, "title": s.title],
+                 "● grabando \(s.app) «\(s.title)» → \(short(s.out))")
         } else {
-            printJSON(["recording": false])
+            emit(["recording": false], "○ no hay grabación")
         }
 
     default:

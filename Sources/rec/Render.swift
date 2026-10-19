@@ -694,5 +694,10 @@ func renderCommand(input: String, args: [String]) async {
     if maxMag > 1.5 {
         res["warning"] = String(format: "el texto se estira %.1f× y saldrá borroso: graba en pantalla Retina, con fuente más grande o ventana más angosta, o usa --crop", maxMag)
     }
-    printJSON(res)
+    let secs = Double(kept) / Double(fps)
+    var line = String(format: "✓ %@ · %d×%d · %.1f s · %d zooms", short(outPath), Int(W), Int(H), secs, project.zooms.filter(\.enabled).count)
+    if f > kept { line += String(format: " · %.1f s de espera cortados", Double(f - kept) / Double(fps)) }
+    if !notes.isEmpty { line += "\n  zoom limitado: " + notes.joined(separator: ", ") }
+    if let w = res["warning"] as? String { line += "\n  ⚠ " + w }
+    emit(res, line)
 }
