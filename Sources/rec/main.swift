@@ -27,10 +27,11 @@ rec — graba UNA ventana de macOS (nunca la pantalla completa). Salida en JSON.
   rec mark "evento" [--rect x,y,w,h]   marca qué hace el agente → {t, label, rect}
                                        t = segundos desde el inicio del archivo
                                        rect en puntos, relativo a la esquina superior izquierda de la ventana
-        [--say "frase"] [--zoom 1.8] [--hold 2] [--no-zoom]
+        [--say "frase"] [--zoom 1.8] [--hold 2] [--no-zoom] [--at +1.5]
   rec stop                             cierra el .mov → {out, marks, cursor, seconds}
   rec render x.mov [--aspect 16:9|9:16|1:1] [--out y.mp4] [--bg "#hex[,#hex]"]
         [--padding 0.08] [--radius 12] [--zoom 1.8] [--no-cursor] [--reset]
+        [--crop x,y,w,h | --no-titlebar] [--fill 0.6]   (fill: alto que ocupa la ventana en 9:16)
                                        arma x.project.json (zooms editables: "enabled": false lo quita)
                                        y exporta con zoom suave, cursor suavizado, fondo y sombra
   rec status                           ¿hay grabación? → {recording, …}
@@ -407,7 +408,9 @@ func run() async {
         guard let s = readSession(), isAlive(s.pid) else { fail("no hay grabación en curso", code: 2) }
         guard let t0 = readClock(pid: s.pid) else { fail("la grabación aún no recibe su primer cuadro", code: 2) }
         guard let label = args.first, !label.hasPrefix("--") else { fail("uso: rec mark \"evento\" [--rect x,y,w,h]", code: 2) }
-        var m: [String: Any] = ["t": Decimal(string: String(format: "%.3f", Date().timeIntervalSince1970 - t0))!, "label": label]
+        // --at corre la marca en el tiempo (+1.5 = cuando termine de escribirse lo que viene).
+        let at = arg("--at", args).flatMap(Double.init) ?? 0
+        var m: [String: Any] = ["t": Decimal(string: String(format: "%.3f", max(0, Date().timeIntervalSince1970 - t0 + at)))!, "label": label]
         if let r = arg("--rect", args) { m["rect"] = r.split(separator: ",").compactMap { Double($0) } }
         if let say = arg("--say", args) { m["say"] = say }
         if let z = arg("--zoom", args).flatMap(Double.init) { m["zoom"] = z }

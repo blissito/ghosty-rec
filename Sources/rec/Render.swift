@@ -15,6 +15,7 @@ struct Zoom: Codable {
     var hold: Double       // cuánto se queda ampliado después de la marca
     var scale: Double
     var focus: [Double]    // centro normalizado 0–1 de la ventana
+    var rect: [Double]?    // recuadro normalizado de la ventana que debe quedar entero a cuadro
     var label: String
     var enabled: Bool
 }
@@ -28,6 +29,8 @@ struct Project: Codable {
     var shadow: Double
     var cursor: Bool
     var cursorSize: Double
+    var crop: [Double]?    // región de la ventana en puntos (x,y,w,h) que entra al video
+    var fill: Double?      // en vertical: fracción del alto que ocupa la ventana sin zoom
     var zooms: [Zoom]
 }
 
@@ -69,49 +72,53 @@ func cubicBezier(_ x1: Double, _ y1: Double, _ x2: Double, _ y2: Double) -> (Dou
 let easeZoom = cubicBezier(0.16, 1, 0.3, 1)
 let easePan = cubicBezier(0.1, 0, 0.2, 1)
 
-struct Key { var t: Double; var s: Double; var fx: Double; var fy: Double; var ease: (Double) -> Double }
+struct Key { var t: Double; var s: Double; var fx: Double; var fy: Double; var rw = 0.0; var rh = 0.0; var ease: (Double) -> Double }
 
 // Línea de tiempo de la cámara: entrada 1 s antes de la marca hasta 0.5 s después,
 // se sostiene `hold`, sale en 1 s; dos zooms a menos de 1.5 s se unen en un paneo.
 func cameraKeys(_ zooms: [Zoom], duration: Double) -> [Key] {
-    var keys = [Key(t: 0, s: 1, fx: 0.5, fy: 0.5, ease: easeZoom)]
     let zs = zooms.filter { $0.enabled && $0.scale > 1.01 }.sorted { $0.t < $1.t }
+    // Sin zoom la cámara descansa en el último recuadro (o en el primero, antes de empezar):
+    // en vertical así no se regresa al centro vacío de la ventana.
+    let first = zs.first
+    var keys = [Key(t: 0, s: 1, fx: first?.focus[0] ?? 0.5, fy: first?.focus[1] ?? 0.5,
+                    rw: first?.rect?[2] ?? 0, rh: first?.rect?[3] ?? 0, ease: easeZoom)]
     var i = 0
     while i < zs.count {
         let z = zs[i]
         let inStart = max(keys.last!.t, z.t - 1.0)
         // Hasta que arranca la entrada la cámara se queda donde estaba; foco y escala se mueven juntos.
-        keys.append(Key(t: inStart, s: 1, fx: keys.last!.fx, fy: keys.last!.fy, ease: easeZoom))
-        keys.append(Key(t: max(inStart + 0.3, z.t + 0.5), s: z.scale, fx: z.focus[0], fy: z.focus[1], ease: easeZoom))
+        keys.append(Key(t: inStart, s: 1, fx: keys.last!.fx, fy: keys.last!.fy, rw: keys.last!.rw, rh: keys.last!.rh, ease: easeZoom))
+        keys.append(Key(t: max(inStart + 0.3, z.t + 0.5), s: z.scale, fx: z.focus[0], fy: z.focus[1], rw: z.rect?[2] ?? 0, rh: z.rect?[3] ?? 0, ease: easeZoom))
         var cur = z
         var end = max(keys.last!.t, z.t + z.hold)
         while i + 1 < zs.count, zs[i + 1].t - 1.0 - (end + 1.0) < 1.5 {
             let n = zs[i + 1]
             let panStart = max(end, n.t - 1.0)
-            keys.append(Key(t: panStart, s: cur.scale, fx: cur.focus[0], fy: cur.focus[1], ease: easePan))
-            keys.append(Key(t: panStart + 1.0, s: n.scale, fx: n.focus[0], fy: n.focus[1], ease: easePan))
+            keys.append(Key(t: panStart, s: cur.scale, fx: cur.focus[0], fy: cur.focus[1], rw: cur.rect?[2] ?? 0, rh: cur.rect?[3] ?? 0, ease: easePan))
+            keys.append(Key(t: panStart + 1.0, s: n.scale, fx: n.focus[0], fy: n.focus[1], rw: n.rect?[2] ?? 0, rh: n.rect?[3] ?? 0, ease: easePan))
             cur = n
             end = max(panStart + 1.0, n.t + n.hold)
             i += 1
         }
-        keys.append(Key(t: end, s: cur.scale, fx: cur.focus[0], fy: cur.focus[1], ease: easeZoom))
-        keys.append(Key(t: min(duration, end + 1.0), s: 1, fx: 0.5, fy: 0.5, ease: easeZoom))
+        keys.append(Key(t: end, s: cur.scale, fx: cur.focus[0], fy: cur.focus[1], rw: cur.rect?[2] ?? 0, rh: cur.rect?[3] ?? 0, ease: easeZoom))
+        keys.append(Key(t: min(duration, end + 1.0), s: 1, fx: cur.focus[0], fy: cur.focus[1], rw: cur.rect?[2] ?? 0, rh: cur.rect?[3] ?? 0, ease: easeZoom))
         i += 1
     }
     return keys
 }
 
-func sampleKeys(_ keys: [Key], _ t: Double) -> (s: Double, fx: Double, fy: Double) {
+func sampleKeys(_ keys: [Key], _ t: Double) -> [Double] {
     guard let j = keys.firstIndex(where: { $0.t > t }) else {
         let k = keys.last!
-        return (k.s, k.fx, k.fy)
+        return [k.s, k.fx, k.fy, k.rw, k.rh]
     }
-    if j == 0 { return (keys[0].s, keys[0].fx, keys[0].fy) }
+    if j == 0 { return [keys[0].s, keys[0].fx, keys[0].fy, keys[0].rw, keys[0].rh] }
     let a = keys[j - 1], b = keys[j]
     let p = b.ease((t - a.t) / max(1e-6, b.t - a.t))
     let fx = a.fx + (b.fx - a.fx) * p
     let fy = a.fy + (b.fy - a.fy) * p
-    return (a.s + (b.s - a.s) * p, fx, fy)
+    return [a.s + (b.s - a.s) * p, fx, fy, a.rw + (b.rw - a.rw) * p, a.rh + (b.rh - a.rh) * p]
 }
 
 // Resorte con Euler semi-implícito a 240 Hz; si cruza el objetivo se clava ahí (sin rebote).
@@ -176,6 +183,58 @@ func cursorImage(height: CGFloat) -> CIImage {
     return img.transformed(by: CGAffineTransform(scaleX: 1 / s, y: 1 / s))
 }
 
+// Encoge un recuadro (normalizado) a lo que de verdad tiene contenido: toma el cuadro al final
+// del zoom, adivina el color de fondo por la esquina del recuadro y se queda con la caja de los
+// píxeles distintos, con un margen. Así «toda la línea» se vuelve «lo que se escribió».
+func tightenRect(_ r: [Double], asset: AVURLAsset, at t: Double) async -> [Double] {
+    let gen = AVAssetImageGenerator(asset: asset)
+    gen.requestedTimeToleranceBefore = .zero
+    gen.requestedTimeToleranceAfter = .zero
+    guard let cg = try? await gen.image(at: CMTime(seconds: t, preferredTimescale: 600)).image else { return r }
+    let w = cg.width, h = cg.height
+    guard let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
+                              space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue),
+          let data = ctx.data else { return r }
+    ctx.draw(cg, in: CGRect(x: 0, y: 0, width: w, height: h))
+    let px = data.bindMemory(to: UInt8.self, capacity: w * h * 4)
+    let x0 = Int(r[0] * Double(w)), y0 = Int(r[1] * Double(h))
+    let x1 = min(w, Int((r[0] + r[2]) * Double(w))), y1 = min(h, Int((r[1] + r[3]) * Double(h)))
+    guard x1 - x0 > 8, y1 - y0 > 8 else { return r }
+    // El buffer está con la fila 0 arriba (CGContext dibuja invertido respecto a CI, pero aquí no importa: misma convención que y0).
+    func pixel(_ x: Int, _ y: Int) -> (Int, Int, Int) {
+        let i = (y * w + x) * 4
+        return (Int(px[i]), Int(px[i + 1]), Int(px[i + 2]))
+    }
+    // Fondo = el color más común del recuadro (muestreado).
+    var counts: [Int: Int] = [:]
+    for y in stride(from: y0, to: y1, by: 3) {
+        for x in stride(from: x0, to: x1, by: 3) {
+            let p = pixel(x, y)
+            counts[(p.0 >> 3) << 10 | (p.1 >> 3) << 5 | (p.2 >> 3), default: 0] += 1
+        }
+    }
+    let key = counts.max { $0.value < $1.value }?.key ?? 0
+    let bg = (((key >> 10) & 31) << 3 + 4, ((key >> 5) & 31) << 3 + 4, (key & 31) << 3 + 4)
+    func differs(_ x: Int, _ y: Int) -> Bool {
+        let p = pixel(x, y)
+        return abs(p.0 - bg.0) + abs(p.1 - bg.1) + abs(p.2 - bg.2) > 60
+    }
+    // Columnas casi llenas son barras (scroll, bordes), no texto: no cuentan.
+    let rows = y1 - y0
+    var minX = x1, minY = y1, maxX = x0, maxY = y0
+    for x in x0..<x1 {
+        var hits: [Int] = []
+        for y in y0..<y1 where differs(x, y) { hits.append(y) }
+        if hits.isEmpty || hits.count > rows * 9 / 10 { continue }
+        minX = min(minX, x); maxX = max(maxX, x)
+        minY = min(minY, hits.first!); maxY = max(maxY, hits.last!)
+    }
+    guard maxX > minX, maxY > minY else { return r }
+    let m = Int(0.02 * Double(w))
+    minX = max(x0, minX - m); minY = max(y0, minY - m); maxX = min(x1, maxX + m); maxY = min(y1, maxY + m)
+    return [Double(minX) / Double(w), Double(minY) / Double(h), Double(maxX - minX) / Double(w), Double(maxY - minY) / Double(h)]
+}
+
 func renderCommand(input: String, args: [String]) async {
     let inPath = URL(fileURLWithPath: input).standardizedFileURL.path
     let base = (inPath as NSString).deletingPathExtension
@@ -206,27 +265,43 @@ func renderCommand(input: String, args: [String]) async {
         project = p
     } else {
         let defaultZoom = arg("--zoom", args).flatMap(Double.init) ?? 1.8
-        let zooms = readJSONLines(base + ".marks.jsonl").compactMap { m -> Zoom? in
+        var zooms = readJSONLines(base + ".marks.jsonl").compactMap { m -> Zoom? in
             guard let t = num(m["t"]) else { return nil }
             var focus = [cursorAt(t).x, cursorAt(t).y]
             var scale = num(m["zoom"]) ?? defaultZoom
+            var rectN: [Double]?
             if let r = m["rect"] as? [NSNumber], r.count == 4 {
                 let rx = r[0].doubleValue, ry = r[1].doubleValue, rw = r[2].doubleValue, rh = r[3].doubleValue
                 focus = [(rx + rw / 2) / winW, (ry + rh / 2) / winH]
+                rectN = [rx / winW, ry / winH, rw / winW, rh / winH]
                 // Que el recuadro quepa con aire: nunca más que lo pedido, ni menos de 1.25.
                 if num(m["zoom"]) == nil { scale = max(1.25, min(defaultZoom, 0.8 * min(winW / max(rw, 1), winH / max(rh, 1)))) }
             }
             return Zoom(t: t, hold: num(m["hold"]) ?? 2.0, scale: scale,
-                        focus: focus.map { min(1, max(0, $0)) }, label: m["label"] as? String ?? "", enabled: true)
+                        focus: focus.map { min(1, max(0, $0)) }, rect: rectN, label: m["label"] as? String ?? "", enabled: true)
+        }
+        // Ajusta cada recuadro a lo que se ve al final de su zoom (--no-tighten lo deja tal cual).
+        if !args.contains("--no-tighten") {
+            let probe = AVURLAsset(url: URL(fileURLWithPath: inPath))
+            for i in zooms.indices {
+                guard let r = zooms[i].rect else { continue }
+                let tight = await tightenRect(r, asset: probe, at: zooms[i].t + zooms[i].hold)
+                zooms[i].rect = tight
+                zooms[i].focus = [tight[0] + tight[2] / 2, tight[1] + tight[3] / 2]
+            }
         }
         project = Project(video: inPath, aspect: "16:9", background: ["#1B2A4A", "#0E1317"], padding: 0.08, radius: 12,
-                          shadow: 0.45, cursor: true, cursorSize: 22, zooms: zooms)
+                          shadow: 0.45, cursor: true, cursorSize: 22, crop: nil, fill: nil, zooms: zooms)
     }
     if let a = arg("--aspect", args) { project.aspect = a }
     if let b = arg("--bg", args) { project.background = b.split(separator: ",").map(String.init) }
     if let p = arg("--padding", args).flatMap(Double.init) { project.padding = p }
     if let r = arg("--radius", args).flatMap(Double.init) { project.radius = r }
     if args.contains("--no-cursor") { project.cursor = false }
+    if let c = arg("--crop", args) { project.crop = c.split(separator: ",").compactMap { Double($0) } }
+    // La barra de título de macOS mide 28 pt; su título suele traer el proceso («sleep ◂ …»).
+    if args.contains("--no-titlebar") { project.crop = [0, 28, winW, winH - 28] }
+    if let f = arg("--fill", args).flatMap(Double.init) { project.fill = f }
     let enc = JSONEncoder()
     enc.outputFormatting = [.prettyPrinted, .sortedKeys]
     try? enc.encode(project).write(to: URL(fileURLWithPath: projPath))
@@ -245,23 +320,32 @@ func renderCommand(input: String, args: [String]) async {
           let fpsF = try? await track.load(.nominalFrameRate) else { fail("no pude leer \(inPath)") }
     let fps = max(1, Int(fpsF.rounded()))
 
+    // Región que entra al video (por defecto la ventana entera); todo lo normalizado se pasa a ella.
+    let crop = (project.crop?.count == 4 ? project.crop! : [0, 0, winW, winH])
+    let nx = { (v: Double) in (v * winW - crop[0]) / crop[2] }
+    let ny = { (v: Double) in (v * winH - crop[1]) / crop[3] }
+    let zooms = project.zooms.map { z -> Zoom in
+        var z = z
+        z.focus = [nx(z.focus[0]), ny(z.focus[1])]
+        if let r = z.rect { z.rect = [nx(r[0]), ny(r[1]), r[2] * winW / crop[2], r[3] * winH / crop[3]] }
+        return z
+    }
     // Pistas suavizadas, una entrada por cuadro.
-    let keys = cameraKeys(project.zooms, duration: duration)
-    let cam = smoothTrack(duration: duration, fps: fps, sample: { t in let k = sampleKeys(keys, t); return [k.s, k.fx, k.fy] },
-                          k: 320, c: 40, m: 0.92)
-    let cur = smoothTrack(duration: duration, fps: fps, sample: { t in let c = cursorAt(t); return [c.x, c.y] },
+    let keys = cameraKeys(zooms, duration: duration)
+    let cam = smoothTrack(duration: duration, fps: fps, sample: { t in sampleKeys(keys, t) }, k: 320, c: 40, m: 0.92)
+    let cur = smoothTrack(duration: duration, fps: fps, sample: { t in let c = cursorAt(t); return [nx(c.x), ny(c.y)] },
                           k: 340, c: 58, m: 1)
 
     // Acomodo: la ventana cabe dentro del lienzo con padding, centrada.
     let W = canvas.width, H = canvas.height
     let pad = CGFloat(project.padding) * min(W, H)
-    let fit = min((W - 2 * pad) / winW, (H - 2 * pad) / winH)
-    let cw = winW * fit, ch = winH * fit
+    let fit = min((W - 2 * pad) / crop[2], (H - 2 * pad) / crop[3])
+    let cw = crop[2] * fit, ch = crop[3] * fit
     let content = CGRect(x: (W - cw) / 2, y: (H - ch) / 2, width: cw, height: ch) // coordenadas CI (origen abajo)
     let radius = CGFloat(project.radius) * fit
     // En vertical una ventana horizontal queda chica: zoom base para que ocupe ~45 % del alto,
     // y la cámara recorre la ventana siguiendo el foco (el recorte 9:16 sale de la misma pista).
-    let baseZoom = max(1, 0.45 * H / ch)
+    let baseZoom = H > W ? max(1, CGFloat(project.fill ?? 0.6) * H / ch) : 1
 
     let colors = project.background.map(parseColor)
     let bg: CIImage = {
@@ -314,20 +398,34 @@ func renderCommand(input: String, args: [String]) async {
     let sRGB = CGColorSpace(name: CGColorSpace.sRGB)!
 
     var f = 0
+    var maxMag: CGFloat = 0
+    let pxPerPoint = CGFloat(num(meta["scale"]) ?? 1)
     while let sb = rout.copyNextSampleBuffer() {
         guard let pb = CMSampleBufferGetImageBuffer(sb) else { continue }
         let i = min(f, cam.count - 1)
-        let s = CGFloat(cam[i][0]) * baseZoom
-        // Foco en coordenadas del lienzo (CI: y hacia arriba), con la cámara sin salirse del lienzo.
+        var s = CGFloat(cam[i][0]) * baseZoom
+        // Foco en coordenadas del lienzo (CI: y hacia arriba).
         var cx = content.minX + CGFloat(cam[i][1]) * cw
         var cy = content.maxY - CGFloat(cam[i][2]) * ch
+        let rw = CGFloat(cam[i][3]) * cw, rh = CGFloat(cam[i][4]) * ch
+        if rw > 1, rh > 1 {
+            // El recuadro marcado entra completo: si no cabe al zoom pedido, se baja el zoom.
+            // Con la cámara centrada en él y el recuadro dentro del lienzo, el clamp de abajo
+            // puede correrla pero nunca lo corta.
+            s = max(1, min(s, 0.92 * W / rw, 0.92 * H / rh))
+        }
+        // Y nunca se sale del lienzo.
         cx = min(W - W / (2 * s), max(W / (2 * s), cx))
         cy = min(H - H / (2 * s), max(H / (2 * s), cy))
+        maxMag = max(maxMag, s * fit / pxPerPoint)
         let camT = CGAffineTransform(translationX: -cx, y: -cy)
             .concatenating(CGAffineTransform(scaleX: s, y: s))
             .concatenating(CGAffineTransform(translationX: W / 2, y: H / 2))
 
-        let frame = CIImage(cvPixelBuffer: pb)
+        let full = CIImage(cvPixelBuffer: pb)
+        let ps = full.extent.width / winW
+        let frame = full.cropped(to: CGRect(x: crop[0] * ps, y: (winH - crop[1] - crop[3]) * ps, width: crop[2] * ps, height: crop[3] * ps))
+            .transformed(by: CGAffineTransform(translationX: -crop[0] * ps, y: -(winH - crop[1] - crop[3]) * ps))
         let k = cw / frame.extent.width
         let placed = frame.transformed(by: CGAffineTransform(scaleX: k, y: k))
             .transformed(by: CGAffineTransform(translationX: content.minX, y: content.minY))
@@ -358,6 +456,10 @@ func renderCommand(input: String, args: [String]) async {
     winput.markAsFinished()
     await writer.finishWriting()
     if writer.status != .completed { fail("falló el export: \(writer.error?.localizedDescription ?? "")") }
-    printJSON(["out": outPath, "project": projPath, "frames": f, "zooms": project.zooms.filter(\.enabled).count,
-               "size": [Int(W), Int(H)]])
+    var res: [String: Any] = ["out": outPath, "project": projPath, "frames": f, "zooms": project.zooms.filter(\.enabled).count,
+                              "size": [Int(W), Int(H)], "maxUpscale": Double(String(format: "%.2f", maxMag))!]
+    if maxMag > 1.5 {
+        res["warning"] = String(format: "el texto se estira %.1f× y saldrá borroso: graba en pantalla Retina, con fuente más grande o ventana más angosta, o usa --crop", maxMag)
+    }
+    printJSON(res)
 }
