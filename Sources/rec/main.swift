@@ -6,7 +6,7 @@ import CoreGraphics
 import Foundation
 import ScreenCaptureKit
 
-let version = "0.6.6"
+let version = "0.6.7"
 
 let stateDir = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".rec")
 let stateFile = stateDir.appendingPathComponent("session.json")
@@ -212,8 +212,23 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Sen
         }
     }
 
+    // Para reanudar si macOS interrumpe la captura con la ventana todavía viva.
+    var restart: (() async -> Bool)?
+    var restarts = 0
+
     func stream(_ stream: SCStream, didStopWithError error: Error) {
-        // Lo normal es que la ventana se haya cerrado: se guarda lo grabado en vez de perderlo.
+        // Si la ventana sigue ahí, macOS cortó la captura (p. ej. «el sistema interrumpió la transmisión»):
+        // se reanuda y el reloj sigue repitiendo el último cuadro, sin hueco. Si ya no existe, se cierra
+        // el archivo con lo grabado.
+        if windowById(windowId) != nil, restarts < 5, let restart {
+            restarts += 1
+            log("el stream se detuvo (\(error.localizedDescription)); reanudo la captura (\(restarts))")
+            Task {
+                try? await Task.sleep(nanoseconds: 300_000_000)
+                if await !restart() { stopSignal.resume() }
+            }
+            return
+        }
         log("el stream se detuvo (\(error.localizedDescription)); cierro el archivo con lo grabado")
         stopSignal.resume()
     }
@@ -319,12 +334,25 @@ func runRecorder(windowId: UInt32, out: String, fps: Int, cursor: Bool) async {
                                "scale": scale, "fps": fps, "app": win.owningApplication?.applicationName ?? "", "title": win.title ?? ""]
     try? JSONSerialization.data(withJSONObject: meta, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
         .write(to: URL(fileURLWithPath: (out as NSString).deletingPathExtension + ".rec.json"))
-    let stream = SCStream(filter: filter, configuration: cfg, delegate: rec)
+    var stream = SCStream(filter: filter, configuration: cfg, delegate: rec)
     do {
         try stream.addStreamOutput(rec, type: .screen, sampleHandlerQueue: DispatchQueue(label: "rec.frames"))
         try await stream.startCapture()
     } catch {
         fail("no pude arrancar la captura: \(error.localizedDescription)")
+    }
+    rec.restart = {
+        let fresh = SCStream(filter: filter, configuration: cfg, delegate: rec)
+        do {
+            try fresh.addStreamOutput(rec, type: .screen, sampleHandlerQueue: DispatchQueue(label: "rec.frames"))
+            try await fresh.startCapture()
+            stream = fresh
+            log("captura reanudada")
+            return true
+        } catch {
+            log("no pude reanudar: \(error.localizedDescription)")
+            return false
+        }
     }
     log("capturando ventana \(windowId) a \(cfg.width)×\(cfg.height) (\(Int(scale))×), \(fps) fps")
 

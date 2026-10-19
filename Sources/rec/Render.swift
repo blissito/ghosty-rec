@@ -241,7 +241,7 @@ func captionImage(_ words: [CaptionWord], line: [Int], current: Int, font: NSFon
             : i == current ? NSColor(srgbRed: 0.52, green: 0.87, blue: 0.80, alpha: 1)
             : NSColor(srgbRed: 0.6, green: 0.65, blue: 0.66, alpha: 1)
         attr.append(NSAttributedString(string: (k > 0 ? " " : "") + words[i].w, attributes: [.font: font, .foregroundColor: color,
-                                       .strokeColor: NSColor.black, .strokeWidth: -7]))
+                                       .strokeColor: NSColor.black, .strokeWidth: -2.5]))
     }
     let size = attr.size()
     let off = max(4, font.pointSize * 0.09), pad = font.pointSize * 0.2
@@ -602,7 +602,6 @@ func renderCommand(input: String, args: [String]) async {
     let capFont = NSFont.systemFont(ofSize: 72 * min(W, H) / 1080, weight: .heavy)
     let capLines = captionLines(captions, font: capFont, maxWidth: W * 0.88)
     var capCache: [String: CIImage] = [:]
-    if !captions.isEmpty { labels = [] }   // los subtítulos sustituyen a las pastillas --say
     let pillFont = (H > W ? 0.052 : 0.036) * min(W, H)
 
     // Quietud: firma barata de cada cuadro; tramos idénticos de más de `trimIdle` s se recortan a ese largo.
@@ -748,7 +747,10 @@ func renderCommand(input: String, args: [String]) async {
             labels[li].cache[n] = pill
             // Tercio inferior, centrada, como subtítulo: nunca tapa lo que se está señalando.
             var x = (W - pill.extent.width) / 2
-            var y = H > W ? 0.29 * H : 0.07 * H
+            // Con karaoke abajo, la pastilla (p. ej. el CTA) sube: en vertical arriba de la ventana, bajo y 240.
+            // Con karaoke abajo, la pastilla (p. ej. el CTA) va encima de la ventana, sin pasar de y 240.
+            var y = !captions.isEmpty ? min(content.maxY + 36 * H / 1920, H - 240 * H / 1920 - pill.extent.height)
+                : (H > W ? 0.29 * H : 0.07 * H)
             x = x.rounded(); y = y.rounded()
             // Entrada: sube 12 px en los primeros 0.25 s.
             let rise = CGFloat(max(0, 1 - (ft - z.t) / 0.25)) * 12
