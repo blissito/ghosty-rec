@@ -233,28 +233,37 @@ func captionLines(_ words: [CaptionWord], font: NSFont, maxWidth: CGFloat) -> [[
     return lines
 }
 
-// Un renglón: dichas en blanco, la actual en menta, las que faltan en gris; contorno y sombra dura negros.
+// Un renglón sobre una placa oscura (#0E1317) con sombra dura en la caja, no en las letras:
+// dichas en blanco, la actual en menta y las que faltan en gris.
 func captionImage(_ words: [CaptionWord], line: [Int], current: Int, font: NSFont) -> CIImage {
     let attr = NSMutableAttributedString()
     for (k, i) in line.enumerated() {
         let color: NSColor = i < current ? NSColor(srgbRed: 0.95, green: 0.96, blue: 0.96, alpha: 1)
             : i == current ? NSColor(srgbRed: 0.52, green: 0.87, blue: 0.80, alpha: 1)
-            : NSColor(srgbRed: 0.6, green: 0.65, blue: 0.66, alpha: 1)
-        attr.append(NSAttributedString(string: (k > 0 ? " " : "") + words[i].w, attributes: [.font: font, .foregroundColor: color,
-                                       .strokeColor: NSColor.black, .strokeWidth: -2.5]))
+            : NSColor(srgbRed: 0.49, green: 0.54, blue: 0.56, alpha: 1)
+        attr.append(NSAttributedString(string: (k > 0 ? " " : "") + words[i].w, attributes: [.font: font, .foregroundColor: color]))
     }
     let size = attr.size()
-    let off = max(4, font.pointSize * 0.09), pad = font.pointSize * 0.2
-    let w = Int(ceil(size.width + off + 2 * pad)), h = Int(ceil(size.height + off + 2 * pad))
+    let padX = font.pointSize * 0.45, padY = font.pointSize * 0.22, off = max(6, font.pointSize * 0.11)
+    let bw = ceil(size.width + 2 * padX), bh = ceil(size.height + 2 * padY), r = font.pointSize * 0.3
+    let w = Int(bw + off), h = Int(bh + off)
     let ctx = CGContext(data: nil, width: w * 2, height: h * 2, bitsPerComponent: 8, bytesPerRow: 0,
                         space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
     ctx.scaleBy(x: 2, y: 2)
+    ctx.setFillColor(CGColor(gray: 0, alpha: 1))
+    ctx.addPath(CGPath(roundedRect: CGRect(x: off, y: 0, width: bw, height: bh), cornerWidth: r, cornerHeight: r, transform: nil))
+    ctx.fillPath()
+    let box = CGRect(x: 0, y: off, width: bw, height: bh)
+    ctx.setFillColor(CGColor(srgbRed: 0.055, green: 0.075, blue: 0.09, alpha: 1))
+    ctx.addPath(CGPath(roundedRect: box, cornerWidth: r, cornerHeight: r, transform: nil))
+    ctx.fillPath()
+    ctx.setStrokeColor(CGColor(gray: 0, alpha: 1))
+    ctx.setLineWidth(3)
+    ctx.addPath(CGPath(roundedRect: box.insetBy(dx: 1.5, dy: 1.5), cornerWidth: r, cornerHeight: r, transform: nil))
+    ctx.strokePath()
     NSGraphicsContext.saveGraphicsState()
     NSGraphicsContext.current = NSGraphicsContext(cgContext: ctx, flipped: false)
-    let shadow = NSMutableAttributedString(attributedString: attr)
-    shadow.addAttributes([.foregroundColor: NSColor.black, .strokeColor: NSColor.black], range: NSRange(location: 0, length: shadow.length))
-    shadow.draw(at: CGPoint(x: pad + off, y: pad))
-    attr.draw(at: CGPoint(x: pad, y: pad + off))
+    attr.draw(at: CGPoint(x: padX, y: off + padY))
     NSGraphicsContext.restoreGraphicsState()
     return CIImage(cgImage: ctx.makeImage()!).transformed(by: CGAffineTransform(scaleX: 0.5, y: 0.5))
 }
