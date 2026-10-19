@@ -485,8 +485,7 @@ func renderCommand(input: String, args: [String]) async {
         guard let r = z.rect else { continue }
         let cap = min(0.92 * W / max(1, CGFloat(r[2]) * cw), 0.92 * H / max(1, CGFloat(r[3]) * ch))
         if CGFloat(z.scale) * baseZoom > cap * 1.05 {
-            notes.append(String(format: "«%@» queda en %.2f× (pediste %.2f×): su contenido llena el ancho; usa fuente más grande o ventana más angosta",
-                                z.label, max(1, cap), z.scale * Double(baseZoom)))
+            notes.append(String(format: "%@: %.2f× de %.2f×", z.label, max(1, cap), z.scale * Double(baseZoom)))
         }
     }
 
@@ -687,7 +686,11 @@ func renderCommand(input: String, args: [String]) async {
     if writer.status != .completed { fail("falló el export: \(writer.error?.localizedDescription ?? "")") }
     var res: [String: Any] = ["out": outPath, "project": projPath, "frames": kept, "trimmedSeconds": Decimal(string: String(format: "%.1f", Double(f - kept) / Double(fps)))!, "zooms": project.zooms.filter(\.enabled).count,
                               "size": [Int(W), Int(H)], "maxUpscale": Decimal(string: String(format: "%.2f", maxMag))!]
-    if !notes.isEmpty { res["zoomLimits"] = notes }
+    if !notes.isEmpty {
+        // Corto para que quepa en una terminal; la explicación va una sola vez.
+        res["zoomLimits"] = notes
+        res["zoomHint"] = "el contenido llena el ancho: fuente más grande o ventana más angosta"
+    }
     if maxMag > 1.5 {
         res["warning"] = String(format: "el texto se estira %.1f× y saldrá borroso: graba en pantalla Retina, con fuente más grande o ventana más angosta, o usa --crop", maxMag)
     }

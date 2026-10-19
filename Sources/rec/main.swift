@@ -6,7 +6,7 @@ import CoreGraphics
 import Foundation
 import ScreenCaptureKit
 
-let version = "0.6.1"
+let version = "0.6.2"
 
 let stateDir = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".rec")
 let stateFile = stateDir.appendingPathComponent("session.json")
@@ -151,6 +151,8 @@ func arg(_ name: String, _ args: [String]) -> String? {
 
 // Global para que ARC no suelte las fuentes de señal antes de tiempo.
 var signalSources: [DispatchSourceSignal] = []
+// Se suelta con SIGINT/SIGTERM o cuando la ventana deja de existir: en los dos casos el archivo se cierra limpio.
+let stopSignal = CheckedContinuationBox()
 
 // Escribe el .mov con AVAssetWriter a cuadros constantes (CFR): ScreenCaptureKit sólo entrega
 // cuadros cuando la ventana cambia, así que un reloj a `fps` repite el último cuadro recibido.
@@ -204,7 +206,9 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Sen
     }
 
     func stream(_ stream: SCStream, didStopWithError error: Error) {
-        fail("el stream se detuvo: \(error.localizedDescription)")
+        // Lo normal es que la ventana se haya cerrado: se guarda lo grabado en vez de perderlo.
+        log("el stream se detuvo (\(error.localizedDescription)); cierro el archivo con lo grabado")
+        stopSignal.resume()
     }
 
     // Arranca el archivo con el primer cuadro real: así el cuadro 0 nunca sale vacío.
@@ -318,7 +322,7 @@ func runRecorder(windowId: UInt32, out: String, fps: Int, cursor: Bool) async {
     log("capturando ventana \(windowId) a \(cfg.width)×\(cfg.height) (\(Int(scale))×), \(fps) fps")
 
     // Espera SIGINT/SIGTERM y cierra el archivo limpio.
-    let stop = CheckedContinuationBox()
+    let stop = stopSignal
     signal(SIGINT, SIG_IGN)
     signal(SIGTERM, SIG_IGN)
     signalSources = [SIGINT, SIGTERM].map { sig -> DispatchSourceSignal in
