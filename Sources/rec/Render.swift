@@ -181,6 +181,20 @@ func backgroundImage(_ spec: [String], canvas: CGSize) -> CIImage {
             return scaled.transformed(by: CGAffineTransform(translationX: -dx, y: -dy)).cropped(to: rect)
         }
         if let colors = backgroundPresets[v] { return backgroundImage(colors, canvas: canvas) }
+        if v.hasPrefix("screenstudio:") {
+            var name = String(v.dropFirst(13))
+            if !name.hasSuffix(".jpg") { name += ".jpg" }
+            guard let data = screenStudioBackground(name), let img = CIImage(data: data) else {
+                let names = screenStudioBackgroundNames()
+                fail(names.isEmpty ? "no encontré Screen Studio en /Applications" :
+                     "no existe «\(v.dropFirst(13))»; hay \(names.count), p. ej. " + names.prefix(6).joined(separator: ", "), code: 2)
+            }
+            let k = max(canvas.width / img.extent.width, canvas.height / img.extent.height)
+            let scaled = img.transformed(by: CGAffineTransform(scaleX: k, y: k))
+            return scaled.transformed(by: CGAffineTransform(translationX: -(scaled.extent.width - canvas.width) / 2 - scaled.extent.minX,
+                                                            y: -(scaled.extent.height - canvas.height) / 2 - scaled.extent.minY))
+                .cropped(to: rect)
+        }
         if v.hasPrefix("ui:") {
             let key = v.dropFirst(3).lowercased().replacingOccurrences(of: " ", with: "-")
             guard let stops = uiGradients[key] else { fail("no existe el gradiente «\(v.dropFirst(3))» de uiGradients (mira uigradients.com)", code: 2) }

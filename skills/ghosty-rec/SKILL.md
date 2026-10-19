@@ -5,7 +5,7 @@ license: MIT
 compatibility: macOS 15+, Homebrew and the Xcode Command Line Tools. The terminal running rec needs the Screen Recording permission.
 metadata:
   author: blissito
-  version: "0.6.8"
+  version: "0.6.9"
 ---
 
 # Record one window with `rec`
@@ -49,7 +49,7 @@ rec stop
 rec render ~/footage/demo.mov --aspect 16:9 --no-titlebar   # or 9:16, 1:1
 ```
 
-- Look: `--bg ui:quepal` (any of the 382 [uiGradients](https://uigradients.com), MIT), `--bg macos:Sonoma|sunset|midnight|ocean|candy|mint|forest|grape|paper|ink|photo.jpg|#hex,#hex`
+- Look: `--bg screenstudio:macOS/sequoia-blue-orange` (any of the 168 backgrounds of the Screen Studio app installed on this Mac, read in place, never copied), `--bg ui:quepal` (any of the 382 [uiGradients](https://uigradients.com), MIT), `--bg macos:Sonoma|sunset|midnight|ocean|candy|mint|forest|grape|paper|ink|photo.jpg|#hex,#hex`
   (`macos:<name>` uses a wallpaper already installed on this Mac), `--cursor-size 3` (multiple of the
   macOS cursor), `--click ring`, `--shadow 0.75`, `--motion-blur` (cursor only, off by default).
 - `--trim-idle 1.5` cuts waits (long installs, builds): stretches where neither the window nor the
