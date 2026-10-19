@@ -383,7 +383,10 @@ func renderCommand(input: String, args: [String]) async {
     // Acomodo: la ventana cabe dentro del lienzo con padding, centrada.
     let W = canvas.width, H = canvas.height
     let pad = CGFloat(project.padding) * min(W, H)
-    let fit = min((W - 2 * pad) / crop[2], (H - 2 * pad) / crop[3])
+    // Tope de nitidez: ni el acomodo ni el zoom estiran los píxeles grabados más de `maxUpscale`.
+    let maxUpscale = CGFloat(arg("--max-upscale", args).flatMap(Double.init) ?? 1.5)
+    let pxPerPoint = CGFloat(num(meta["scale"]) ?? 1)
+    let fit = min((W - 2 * pad) / crop[2], (H - 2 * pad) / crop[3], maxUpscale * pxPerPoint)
     let cw = crop[2] * fit, ch = crop[3] * fit
     let content = CGRect(x: (W - cw) / 2, y: (H - ch) / 2, width: cw, height: ch) // coordenadas CI (origen abajo)
     let radius = CGFloat(project.radius) * fit
@@ -457,7 +460,6 @@ func renderCommand(input: String, args: [String]) async {
 
     var f = 0
     var maxMag: CGFloat = 0
-    let pxPerPoint = CGFloat(num(meta["scale"]) ?? 1)
     while let sb = rout.copyNextSampleBuffer() {
         guard let pb = CMSampleBufferGetImageBuffer(sb) else { continue }
         let i = min(f, cam.count - 1)
@@ -472,6 +474,9 @@ func renderCommand(input: String, args: [String]) async {
             // puede correrla pero nunca lo corta.
             s = max(1, min(s, 0.92 * W / rw, 0.92 * H / rh))
         }
+        // Tope de nitidez: nunca estirar los píxeles grabados más de `maxUpscale` (1.5× por default).
+        // Mejor un zoom chico y nítido que uno grande y borroso.
+        s = max(1, min(s, maxUpscale * pxPerPoint / fit))
         // Y nunca se sale del lienzo.
         cx = min(W - W / (2 * s), max(W / (2 * s), cx))
         cy = min(H - H / (2 * s), max(H / (2 * s), cy))

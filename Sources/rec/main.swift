@@ -31,7 +31,7 @@ rec — graba UNA ventana de macOS (nunca la pantalla completa). Salida en JSON.
   rec stop                             cierra el .mov → {out, marks, cursor, seconds}
   rec render x.mov [--aspect 16:9|9:16|1:1] [--out y.mp4] [--bg "#hex[,#hex]"]
         [--padding 0.08] [--radius 12] [--zoom 1.8] [--no-cursor] [--reset]
-        [--crop x,y,w,h | --no-titlebar] [--fill 0.6]   (fill: alto que ocupa la ventana en 9:16)
+        [--crop x,y,w,h | --no-titlebar] [--fill 0.6] [--max-upscale 1.5]   (fill: alto que ocupa la ventana en 9:16)
                                        arma x.project.json (zooms editables: "enabled": false lo quita)
                                        y exporta con zoom suave, cursor suavizado, fondo y sombra
   rec status                           ¿hay grabación? → {recording, …}
