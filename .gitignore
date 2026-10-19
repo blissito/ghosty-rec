@@ -2,3 +2,4 @@
 .swiftpm/
 *.mov
 *.mp4
+dist/
