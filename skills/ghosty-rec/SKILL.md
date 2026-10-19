@@ -5,7 +5,7 @@ license: MIT
 compatibility: macOS 15+, Homebrew and the Xcode Command Line Tools. The terminal running rec needs the Screen Recording permission.
 metadata:
   author: blissito
-  version: "0.6.4"
+  version: "0.6.5"
 ---
 
 # Record one window with `rec`
@@ -39,7 +39,7 @@ rec stop
   grab the wrong window.
 - `--rect x,y,w,h` is in points, relative to the window's top-left corner. Each mark becomes a
   zoom to that box; the box is always kept fully visible.
-- `--say` is the caption that types itself word by word under the box. Keep it short and concrete.
+- `--say` is the caption that types itself word by word. Keep it short and concrete; `\n` breaks the line (good for URLs).
 - `--at +1.5` shifts the mark in time (put it where the result is already on screen).
 - Only ONE recording per Mac at a time. If another agent may be recording, check `rec status` first.
 

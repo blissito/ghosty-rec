@@ -295,6 +295,7 @@ func tightenRect(_ r: [Double], asset: AVURLAsset, at t: Double) async -> [Doubl
 // Pastilla plana con sombra dura (sin blur): las primeras `words` palabras de `text`.
 // El ancho se fija con la frase completa para que no brinque mientras se escribe.
 func pillImage(_ text: String, words: Int, fontSize: CGFloat, maxWidth: CGFloat) -> CIImage {
+    let text = text.replacingOccurrences(of: "\\n", with: "\n")
     let all = text.split(separator: " ").map(String.init)
     let shown = all.prefix(words).joined(separator: " ")
     let font = NSFont.systemFont(ofSize: fontSize, weight: .bold)
@@ -701,7 +702,9 @@ func renderCommand(input: String, args: [String]) async {
         res["warning"] = String(format: "el texto se estira %.1f× y saldrá borroso: graba en pantalla Retina, con fuente más grande o ventana más angosta, o usa --crop", maxMag)
     }
     let secs = Double(kept) / Double(fps)
-    var line = String(format: "✓ %@ · %d×%d · %.1f s · %d zooms", short(outPath), Int(W), Int(H), secs, project.zooms.filter(\.enabled).count)
+    let nz = project.zooms.filter(\.enabled).count
+    var line = String(format: "✓ %@ · %d×%d · %.1f s", short(outPath), Int(W), Int(H), secs)
+    if nz > 0 { line += " · \(nz) zoom" + (nz == 1 ? "" : "s") }
     if f > kept { line += String(format: " · %.1f s de espera cortados", Double(f - kept) / Double(fps)) }
     if !notes.isEmpty { line += "\n  zoom limitado: " + notes.joined(separator: ", ") }
     if let w = res["warning"] as? String { line += "\n  ⚠ " + w }
