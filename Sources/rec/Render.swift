@@ -468,15 +468,8 @@ func renderCommand(input: String, args: [String]) async {
         // Sin marcas: zoom automático por grupos de clics, como «follow-click-groups» de Screen Studio
         // (clics a menos de 2.5 s se juntan; el zoom dura del primero al último + 1.5 s).
         if zooms.isEmpty, !args.contains("--no-auto-zoom") {
-            var groups: [[CursorSample]] = []
-            var prevDown = false
-            for c in cursor {
-                if c.down && !prevDown {
-                    if let last = groups.last?.last, c.t - last.t < 2.5 { groups[groups.count - 1].append(c) } else { groups.append([c]) }
-                }
-                prevDown = c.down
-            }
-            zooms = groups.map { g in
+            // Sólo clics dentro de la ventana: el log es el mouse real y puede clicar en otra app.
+            zooms = clickGroups(cursor).map { g in
                 let fx = g.map(\.x).reduce(0, +) / Double(g.count), fy = g.map(\.y).reduce(0, +) / Double(g.count)
                 return Zoom(t: g.first!.t, hold: g.last!.t - g.first!.t + 1.5, scale: defaultZoom,
                             focus: [min(1, max(0, fx)), min(1, max(0, fy))], rect: nil, label: "clic", say: nil, enabled: true)
@@ -496,6 +489,13 @@ func renderCommand(input: String, args: [String]) async {
         project = Project(video: inPath, aspect: "16:9", background: defaultBg, padding: 0.08, radius: 12,
                           shadow: 0.75, cursor: true, cursorSize: 1.5, clickEffect: nil, motionBlur: nil, shadowStyle: nil, trimIdle: nil,
                           crop: nil, fill: nil, zooms: zooms)
+    }
+    // Ningún zoom sin recuadro queda lejos del puntero (también los de un project.json ya escrito).
+    var zoomGuard: (dropped: [Double], refocused: [Double]) = ([], [])
+    if !cursor.isEmpty {
+        let g = guardZoomsToPointer(project.zooms, pointerAt: { t in let c = cursorAt(t); return (c.x, c.y) })
+        project.zooms = g.zooms
+        zoomGuard = (g.dropped, g.refocused)
     }
     if let a = arg("--aspect", args) { project.aspect = a }
     if let b = arg("--bg", args) { project.background = b.split(separator: ",").map(String.init) }
@@ -817,6 +817,8 @@ func renderCommand(input: String, args: [String]) async {
         let o = keep.isEmpty ? z.t : Double(keep.prefix(min(src, keep.count)).filter { $0 }.count) / Double(fps)
         return ["label": z.label, "t": Decimal(string: String(format: "%.3f", o))!]
     }
+    if !zoomGuard.dropped.isEmpty { res["zoomsDropped"] = zoomGuard.dropped.map { Decimal(string: String(format: "%.2f", $0))! } }
+    if !zoomGuard.refocused.isEmpty { res["zoomsRefocused"] = zoomGuard.refocused.map { Decimal(string: String(format: "%.2f", $0))! } }
     if !notes.isEmpty {
         // Corto para que quepa en una terminal; la explicación va una sola vez.
         res["zoomLimits"] = notes
@@ -830,6 +832,7 @@ func renderCommand(input: String, args: [String]) async {
     var line = String(format: "✓ %@ · %d×%d · %.1f s", short(outPath), Int(W), Int(H), secs)
     if nz > 0 { line += " · \(nz) zoom" + (nz == 1 ? "" : "s") }
     if f > kept { line += String(format: " · %.1f s de espera cortados", Double(f - kept) / Double(fps)) }
+    if !zoomGuard.dropped.isEmpty { line += "\n  zoom apagado (puntero fuera de la ventana) en " + zoomGuard.dropped.map { String(format: "%.1f s", $0) }.joined(separator: ", ") }
     if !notes.isEmpty { line += "\n  zoom limitado: " + notes.joined(separator: ", ") }
     if let w = res["warning"] as? String { line += "\n  ⚠ " + w }
     emit(res, line)

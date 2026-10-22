@@ -5,7 +5,7 @@ license: MIT
 compatibility: macOS 15+, Homebrew and the Xcode Command Line Tools. The terminal running rec needs the Screen Recording permission.
 metadata:
   author: blissito
-  version: "0.6.9"
+  version: "0.6.10"
 ---
 
 # Record one window with `rec`

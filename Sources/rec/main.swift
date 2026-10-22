@@ -6,7 +6,7 @@ import CoreGraphics
 import Foundation
 import ScreenCaptureKit
 
-let version = "0.6.9"
+let version = "0.6.10"
 
 let stateDir = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".rec")
 let stateFile = stateDir.appendingPathComponent("session.json")

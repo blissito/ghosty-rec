@@ -5,6 +5,9 @@ import PackageDescription
 let package = Package(
     name: "rec",
     platforms: [.macOS(.v15)],
-    targets: [.executableTarget(name: "rec", path: "Sources/rec")],
+    targets: [
+        .executableTarget(name: "rec", path: "Sources/rec"),
+        .testTarget(name: "recTests", dependencies: ["rec"], path: "Tests/recTests"),
+    ],
     swiftLanguageModes: [.v5]
 )
