@@ -5,7 +5,7 @@ license: MIT
 compatibility: macOS 15+, Homebrew and the Xcode Command Line Tools. The terminal running rec needs the Screen Recording permission.
 metadata:
   author: blissito
-  version: "0.6.10"
+  version: "0.6.11"
 ---
 
 # Record one window with `rec`
@@ -46,8 +46,13 @@ rec stop
 ## Render
 
 ```sh
-rec render ~/footage/demo.mov --aspect 16:9 --no-titlebar   # or 9:16, 1:1
+rec render ~/footage/demo.mov --aspect 16:9 --no-titlebar   # or 9:16, 1:1, native
 ```
+
+- `--aspect native`: the window at its real pixel size (e.g. 1300×1398, or the `--crop`/`--no-titlebar`
+  region), no background, padding, rounded corners or shadow. Trims, zooms (crop-and-scale inside the
+  same frame), cursor and captions still apply. Writes `demo.native.mp4`. Use it instead of the raw `.mov`
+  when you need the window alone but with `--trim-idle`.
 
 - Look: `--bg screenstudio:macOS/sequoia-blue-orange` (any of the 168 backgrounds of the Screen Studio app installed on this Mac, read in place, never copied), `--bg ui:quepal` (any of the 382 [uiGradients](https://uigradients.com), MIT), `--bg macos:Sonoma|sunset|midnight|ocean|candy|mint|forest|grape|paper|ink|photo.jpg|#hex,#hex`
   (`macos:<name>` uses a wallpaper already installed on this Mac), `--cursor-size 3` (multiple of the
@@ -57,7 +62,9 @@ rec render ~/footage/demo.mov --aspect 16:9 --no-titlebar   # or 9:16, 1:1
 - `--captions words.json` (`[{"w","s","e"}]` in final-video seconds, e.g. from a narration transcript)
   burns one-line karaoke subtitles (72 px, current word highlighted). The JSON output's `marksOut`
   gives each mark's time in the final video (after `--trim-idle`), to place the voice.
-- Without marks it zooms automatically on each group of clicks (`--no-auto-zoom` turns it off).
+- Without marks it zooms automatically on each group of clicks (1.8×, from the first click to the last
+  + 1.5 s). It can feel abrupt on short takes: `--no-auto-zoom` turns it off, also for the auto zooms
+  already saved in `demo.project.json` (they stay in the file).
 - Writes `demo.16x9.mp4` (1920×1080, 60 fps) and `demo.project.json`. To drop a zoom set its
   `"enabled": false` in the JSON and render again; `--reset` rebuilds it from the marks.
 - Read the JSON output: `zoomLimits` says which zoom could not grow (content fills the width) and

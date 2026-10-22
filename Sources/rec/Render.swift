@@ -520,11 +520,6 @@ func renderCommand(input: String, args: [String]) async {
     enc.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
     try? enc.encode(project).write(to: URL(fileURLWithPath: projPath))
 
-    let canvas: CGSize = switch project.aspect {
-    case "9:16": CGSize(width: 1080, height: 1920)
-    case "1:1": CGSize(width: 1080, height: 1080)
-    default: CGSize(width: 1920, height: 1080)
-    }
     let outPath = arg("--out", args).map { URL(fileURLWithPath: $0).standardizedFileURL.path }
         ?? base + ".\(project.aspect.replacingOccurrences(of: ":", with: "x")).mp4"
 
@@ -536,6 +531,21 @@ func renderCommand(input: String, args: [String]) async {
 
     // Región que entra al video (por defecto la ventana entera); todo lo normalizado se pasa a ella.
     let crop = (project.crop?.count == 4 ? project.crop! : [0, 0, winW, winH])
+    // Nativo: tamaño real de la ventana (o del recorte), sin fondo, margen, esquinas ni sombra.
+    let native = project.aspect == "native"
+    let canvas: CGSize
+    if native {
+        let nat = (try? await track.load(.naturalSize)) ?? CGSize(width: winW, height: winH)
+        canvas = nativeCanvas(videoPixels: nat, windowPoints: CGSize(width: winW, height: winH), crop: crop)
+    } else {
+        canvas = switch project.aspect {
+        case "9:16": CGSize(width: 1080, height: 1920)
+        case "1:1": CGSize(width: 1080, height: 1080)
+        default: CGSize(width: 1920, height: 1080)
+        }
+    }
+    // --no-auto-zoom también apaga los zooms automáticos de un project.json ya escrito (sólo en este render).
+    if args.contains("--no-auto-zoom") { project.zooms = withoutAutoZooms(project.zooms) }
     let nx = { (v: Double) in (v * winW - crop[0]) / crop[2] }
     let ny = { (v: Double) in (v * winH - crop[1]) / crop[3] }
     let zooms = project.zooms.map { z -> Zoom in
@@ -552,22 +562,26 @@ func renderCommand(input: String, args: [String]) async {
 
     // Acomodo: la ventana cabe dentro del lienzo con padding, centrada.
     let W = canvas.width, H = canvas.height
-    let pad = CGFloat(project.padding) * min(W, H)
+    let pad = native ? 0 : CGFloat(project.padding) * min(W, H)
+    // En vertical (9:16) se acomoda para TikTok; en nativo no, aunque la ventana sea más alta que ancha.
+    let vertical = H > W && !native
     // Tope de nitidez: ni el acomodo ni el zoom estiran los píxeles grabados más de `maxUpscale`.
     let maxUpscale = CGFloat(arg("--max-upscale", args).flatMap(Double.init) ?? 1.5)
     let pxPerPoint = CGFloat(num(meta["scale"]) ?? 1)
     // Si hay zooms, se deja margen para que el zoom quepa sin pasar el tope (~1.4× de zoom nítido).
-    let headroom: CGFloat = zooms.contains { $0.enabled && $0.scale > 1.01 } ? 1.4 : 1
-    let fit = min((W - 2 * pad) / crop[2], (H - 2 * pad) / crop[3], maxUpscale * pxPerPoint / headroom)
-    let cw = crop[2] * fit, ch = crop[3] * fit
+    let headroom: CGFloat = native ? 1 : zooms.contains { $0.enabled && $0.scale > 1.01 } ? 1.4 : 1
+    let fit = native ? min(W / crop[2], H / crop[3])
+        : min((W - 2 * pad) / crop[2], (H - 2 * pad) / crop[3], maxUpscale * pxPerPoint / headroom)
+    // En nativo la ventana llena el lienzo entero (sin una línea de fondo por redondeo).
+    let cw = native ? W : crop[2] * fit, ch = native ? H : crop[3] * fit
     // En vertical la ventana se centra en el 42 % del alto: TikTok tapa y 1400–1920 (de 1920) con su UI,
     // y el subtítulo vive justo encima de esa franja.
-    let contentY = H > W ? H - 0.42 * H - ch / 2 : (H - ch) / 2
+    let contentY = vertical ? H - 0.42 * H - ch / 2 : (H - ch) / 2
     let content = CGRect(x: (W - cw) / 2, y: contentY, width: cw, height: ch) // coordenadas CI (origen abajo)
-    let radius = CGFloat(project.radius) * fit
+    let radius = native ? 0 : CGFloat(project.radius) * fit
     // En vertical una ventana horizontal queda chica: zoom base para que ocupe ~45 % del alto,
     // y la cámara recorre la ventana siguiendo el foco (el recorte 9:16 sale de la misma pista).
-    let baseZoom = H > W ? max(1, CGFloat(project.fill ?? 0.6) * H / ch) : 1
+    let baseZoom = vertical ? max(1, CGFloat(project.fill ?? 0.6) * H / ch) : 1
     // Avisa de los zooms que no pueden crecer porque su recuadro ya llena el ancho o el alto.
     var notes: [String] = []
     for z in zooms where z.enabled {
@@ -578,7 +592,8 @@ func renderCommand(input: String, args: [String]) async {
         }
     }
 
-    let bg = backgroundImage(project.background, canvas: canvas)
+    let bg = native ? CIImage(color: .black).cropped(to: CGRect(origin: .zero, size: canvas))
+        : backgroundImage(project.background, canvas: canvas)
     let mask: CIImage = {
         let r = CIFilter.roundedRectangleGenerator()
         r.extent = content
@@ -603,7 +618,7 @@ func renderCommand(input: String, args: [String]) async {
         r.color = CIColor(red: 0, green: 0, blue: 0, alpha: 1)
         return r.outputImage!.cropped(to: CGRect(origin: .zero, size: canvas))
     }()
-    let staticBack = (project.shadowStyle == "hard" ? hardShadow : shadow).composited(over: bg)
+    let staticBack = native ? bg : (project.shadowStyle == "hard" ? hardShadow : shadow).composited(over: bg)
     // El cursor de macOS mide ~20 pt; los proyectos viejos guardaban el alto en puntos (> 5).
     let cursorPts = project.cursorSize > 5 ? project.cursorSize : 20 * project.cursorSize
     let arrow = cursorImage(height: CGFloat(cursorPts) * fit)
@@ -625,7 +640,7 @@ func renderCommand(input: String, args: [String]) async {
     let capFont = NSFont.systemFont(ofSize: 72 * min(W, H) / 1080, weight: .heavy)
     let capLines = captionLines(captions, font: capFont, maxWidth: W * 0.88)
     var capCache: [String: CIImage] = [:]
-    let pillFont = (H > W ? 0.052 : 0.036) * min(W, H)
+    let pillFont = (vertical ? 0.052 : 0.036) * min(W, H)
 
     // Quietud: firma barata de cada cuadro; tramos idénticos de más de `trimIdle` s se recortan a ese largo.
     var keep = [Bool]()
@@ -773,7 +788,7 @@ func renderCommand(input: String, args: [String]) async {
             // Con karaoke abajo, la pastilla (p. ej. el CTA) sube: en vertical arriba de la ventana, bajo y 240.
             // Con karaoke abajo, la pastilla (p. ej. el CTA) va encima de la ventana, sin pasar de y 240.
             var y = !captions.isEmpty ? min(content.maxY + 36 * H / 1920, H - 240 * H / 1920 - pill.extent.height)
-                : (H > W ? 0.29 * H : 0.07 * H)
+                : (vertical ? 0.29 * H : 0.07 * H)
             x = x.rounded(); y = y.rounded()
             // Entrada: sube 12 px en los primeros 0.25 s.
             let rise = CGFloat(max(0, 1 - (ft - z.t) / 0.25)) * 12
@@ -791,7 +806,7 @@ func renderCommand(input: String, args: [String]) async {
                 let key = "\(li)-\(current)"
                 let img = capCache[key] ?? captionImage(captions, line: line, current: current, font: capFont)
                 capCache[key] = img
-                let centerY = H > W ? H - 1290 * H / 1920 : 0.12 * H
+                let centerY = vertical ? H - 1290 * H / 1920 : 0.12 * H
                 out = img.transformed(by: CGAffineTransform(translationX: ((W - img.extent.width) / 2).rounded(),
                                                             y: (centerY - img.extent.height / 2).rounded())).composited(over: out)
             }

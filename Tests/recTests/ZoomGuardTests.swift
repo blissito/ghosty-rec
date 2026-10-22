@@ -1,4 +1,5 @@
 import Testing
+import CoreGraphics
 @testable import rec
 
 // Regresión de take2 (gads-verificacion, 22-oct): clics reales fuera de la ventana
@@ -34,5 +35,28 @@ import Testing
         let r = guardZoomsToPointer([z], pointerAt: { _ in (-2, -2) })
         #expect(r.zooms[0].enabled)
         #expect(r.zooms[0].focus == [0.2, 0.2])
+    }
+}
+
+// --aspect native (0.6.11): el lienzo es la ventana real, en pares.
+@Suite struct NativeCanvasTests {
+    @Test func fullWindowKeepsRealPixels() {
+        // take3: ventana de 1301×1399 pt grabada a 1300×1398 px (escala 1).
+        let c = nativeCanvas(videoPixels: CGSize(width: 1300, height: 1398), windowPoints: CGSize(width: 1301, height: 1399), crop: [0, 0, 1301, 1399])
+        #expect(c == CGSize(width: 1300, height: 1398))
+    }
+
+    @Test func cropIsScaledAndEven() {
+        // Retina 2×, sin barra de título (28 pt): 2×(1399−28) = 2742.
+        let c = nativeCanvas(videoPixels: CGSize(width: 2602, height: 2798), windowPoints: CGSize(width: 1301, height: 1399), crop: [0, 28, 1301, 1371])
+        #expect(c == CGSize(width: 2602, height: 2742))
+        let odd = nativeCanvas(videoPixels: CGSize(width: 801, height: 601), windowPoints: CGSize(width: 801, height: 601), crop: [0, 0, 801, 601])
+        #expect(odd == CGSize(width: 800, height: 600))
+    }
+
+    @Test func noAutoZoomDropsOnlyClickZooms() {
+        let auto = Zoom(t: 11.8, hold: 1.5, scale: 1.8, focus: [0.66, 0.27], rect: nil, label: "clic", say: nil, enabled: true)
+        let marked = Zoom(t: 20, hold: 2, scale: 1.5, focus: [0.5, 0.5], rect: [0.4, 0.4, 0.2, 0.2], label: "clic", say: nil, enabled: true)
+        #expect(withoutAutoZooms([auto, marked]).count == 1)
     }
 }

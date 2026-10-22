@@ -17,7 +17,9 @@ rec render demo.mov --aspect 9:16 --no-titlebar       # zoom, cursor, fondo, pas
   ese zoom desaparece al volver a renderizar.
 - Look de Screen Studio: `--bg screenstudio:macOS/sequoia-blue-orange` (los 168 fondos de tu Screen Studio instalado; se leen de la app, no se copian), `--bg ui:quepal` (los 382 gradientes de uiGradients), `--bg macos:Sonoma|sunset|midnight|ocean|mint|foto.jpg|#hex,#hex`,
   `--cursor-size 3`, `--click ring`, sombra suave y resortes medidos de sus proyectos. Sin marcas,
-  hace zoom solo en cada grupo de clics (`--no-auto-zoom` lo apaga).
+  hace zoom solo en cada grupo de clics (`--no-auto-zoom` lo apaga, también los ya guardados en el project.json).
+- Sin marco: `--aspect native` exporta la ventana a su tamaño real (p. ej. 1300×1398), sin fondo, margen,
+  esquinas ni sombra, con los recortes (`--trim-idle`), zooms y pastillas → `demo.native.mp4`.
 - Subtítulos karaoke: `--captions palabras.json` (`[{w, s, e}]` en segundos del video final).
 - Tope de nitidez: no estira lo grabado más de 1.5× (`--max-upscale`). Graba con letra grande o en Retina.
 
